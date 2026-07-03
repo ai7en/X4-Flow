@@ -40,8 +40,3 @@
 
 ### 🔄 5. Менеджер прошивок (`FirmwareScreen`)
 Парсер релизов GitHub API для экосистемы CrossPoint. Отслеживает репозитории `uxjulia/CrossInk`, `obijuankenobiii/inx`, `crosspoint-reader`, `franssjz/cpr-vcodex`, `alrudimgn` и других. Фильтрует и скачивает файлы `.bin` напрямую в публичную папку смартфона `/Download/XteinkFirmware` с использованием прав `MANAGE_EXTERNAL_STORAGE`.
-
----
-
-## 🎯 Скрытые функции (Пасхалки)
-* **Доступ к конвертеру шрифтов:** Модуль шрифтов скрыт из панели навигации `NavigationBar` для разгрузки интерфейса. Чтобы открыть экран `FontConverterScreen`, необходимо зайти в «Настройки» (`SettingsScreen`) и **удерживать иконку настроек в AppBar в течение 5 секунд**.
