@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Font Converter Bridge</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    .status {
+      padding: 12px;
+      margin: 10px 0;
+      border-radius: 8px;
+      background: #2a2a2a;
+      border-left: 4px solid #4CAF50;
+    }
+    .status.error {
+      border-left-color: #f44336;
+    }
+    .status.warning {
+      border-left-color: #ff9800;
+    }
+    #progress-log {
+      background: #0a0a0a;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 20px;
+    }
+    .log-entry {
+      margin: 4px 0;
+      color: #4CAF50;
+    }
+    .log-entry.error {
+      color: #f44336;
+    }
+    .log-entry.info {
+      color: #2196F3;
+    }
+  </style>
+</head>
+<body>
+  <div id="status" class="status">Инициализация FreeType WASM...</div>
+  <div id="progress-log"></div>
+
+  <script type="module">
+    import FreeType from './freetype.js';
+
+    let ft = null;
+    let isReady = false;
+
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('progress-log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+      console.log(`[FontConverter] ${message}`);
+    }
+
+    function updateStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      statusDiv.textContent = message;
+      statusDiv.className = `status ${type}`;
+    }
+
+    async function initFreeType() {
+      try {
+        log('Загрузка FreeType WASM...', 'info');
+        ft = await FreeType();
+        isReady = true;
+        updateStatus('✅ FreeType готов к работе');
+        log('FreeType успешно инициализирован', 'info');
+        
+        // Уведомляем Flutter что мы готовы
+        if (window.FlutterBridge) {
+          FlutterBridge.postMessage(JSON.stringify({
+            type: 'ready',
+            status: 'FreeType initialized'
+          }));
+        }
+      } catch (error) {
+        const errorMsg = `Ошибка инициализации FreeType: ${error.message}`;
+        updateStatus(`❌ ${errorMsg}`, 'error');
+        log(errorMsg, 'error');
+        
+        if (window.FlutterBridge) {
+          FlutterBridge.postMessage(JSON.stringify({
+            type: 'error',
+            message: errorMsg
+          }));
+        }
+      }
+    }
+
+    // Глобальная функция для вызова из Flutter
+    window.convertFont = async function(payload) {
+      if (!isReady || !ft) {
+        const errorMsg = 'FreeType еще не готов';
+        log(errorMsg, 'error');
+        if (window.FlutterBridge) {
+          FlutterBridge.postMessage(JSON.stringify({
+            type: 'error',
+            message: errorMsg
+          }));
+        }
+        return;
+      }
+
+      try {
+        const data = JSON.parse(payload);
+        log(`Начало конвертации: ${data.fontFamily}`, 'info');
+        updateStatus(`🔄 Конвертация ${data.fontFamily}...`);
+
+        // Декодируем base64 шрифт
+        const fontBytes = Uint8Array.from(atob(data.fontBase64), c => c.charCodeAt(0));
+        log(`Загружен шрифт: ${(fontBytes.length / 1024).toFixed(1)} KB`, 'info');
+
+        // Загружаем шрифт в FreeType
+        const face = await ft.newFace(fontBytes, 0);
+        log(`Шрифт загружен: ${face.family_name} ${face.style_name}`, 'info');
+
+        const fontSize = data.sizes[0] || 16;
+        await face.setPixelSizes(0, fontSize);
+        log(`Размер шрифта: ${fontSize}px`, 'info');
+
+        // Собираем Unicode кодовые точки
+        const codePoints = [];
+        for (const interval of data.intervals) {
+          for (let cp = interval.start; cp <= interval.end; cp++) {
+            codePoints.push(cp);
+          }
+        }
+        log(`Всего глифов для рендеринга: ${codePoints.length}`, 'info');
+
+        // Рендерим глифы
+        const glyphs = [];
+        const bitmapData = [];
+        let bitmapOffset = 0;
+
+        for (let i = 0; i < codePoints.length; i++) {
+          const cp = codePoints[i];
+          try {
+            await face.loadChar(cp, ft.FT_LOAD_RENDER);
+            const glyph = face.glyph;
+            const bitmap = glyph.bitmap;
+
+            if (bitmap.width > 0 && bitmap.rows > 0) {
+              const glyphData = {
+                codePoint: cp,
+                width: bitmap.width,
+                height: bitmap.rows,
+                left: glyph.bitmap_left,
+                top: glyph.bitmap_top,
+                advanceX: glyph.advance.x >> 6,
+                advanceY: glyph.advance.y >> 6,
+                pitch: bitmap.pitch,
+                dataOffset: bitmapOffset,
+                dataLength: bitmap.buffer.length
+              };
+
+              glyphs.push(glyphData);
+              bitmapData.push(...bitmap.buffer);
+              bitmapOffset += bitmap.buffer.length;
+            } else {
+              glyphs.push({
+                codePoint: cp,
+                width: 0,
+                height: 0,
+                left: 0,
+                top: 0,
+                advanceX: glyph.advance.x >> 6,
+                advanceY: glyph.advance.y >> 6,
+                pitch: 0,
+                dataOffset: 0,
+                dataLength: 0
+              });
+            }
+
+            if (i % 100 === 0) {
+              log(`Обработано глифов: ${i}/${codePoints.length}`, 'info');
+              updateStatus(`🔄 Конвертация: ${i}/${codePoints.length} глифов`);
+            }
+          } catch (error) {
+            log(`Ошибка рендеринга глифа U+${cp.toString(16).toUpperCase()}: ${error.message}`, 'error');
+          }
+        }
+
+        log(`Рендеринг завершен. Всего глифов: ${glyphs.length}`, 'info');
+
+        // Создаем .cpfont файл
+        const cpfont = createCpFont(data.fontFamily, glyphs, bitmapData, fontSize);
+        log(`Создан .cpfont: ${(cpfont.length / 1024).toFixed(1)} KB`, 'info');
+
+        // Конвертируем в base64
+        const base64 = btoa(String.fromCharCode(...cpfont));
+        log(`Конвертация завершена успешно`, 'info');
+        updateStatus('✅ Конвертация завершена');
+
+        // Отправляем результат в Flutter
+        if (window.FlutterBridge) {
+          FlutterBridge.postMessage(JSON.stringify({
+            type: 'success',
+            fontFamily: data.fontFamily,
+            glyphCount: glyphs.length,
+            fileSize: cpfont.length,
+            data: base64
+          }));
+        }
+
+      } catch (error) {
+        const errorMsg = `Ошибка конвертации: ${error.message}`;
+        log(errorMsg, 'error');
+        updateStatus(`❌ ${errorMsg}`, 'error');
+        
+        if (window.FlutterBridge) {
+          FlutterBridge.postMessage(JSON.stringify({
+            type: 'error',
+            message: errorMsg
+          }));
+        }
+      }
+    };
+
+    function createCpFont(familyName, glyphs, bitmapData, fontSize) {
+      // Формат .cpfont v1
+      const headerSize = 32;
+      const glyphEntrySize = 20;
+      
+      const totalSize = headerSize + (glyphs.length * glyphEntrySize) + bitmapData.length;
+      const buffer = new ArrayBuffer(totalSize);
+      const view = new DataView(buffer);
+      const uint8View = new Uint8Array(buffer);
+
+      let offset = 0;
+
+      // Magic number "CPFONT"
+      const magic = new TextEncoder().encode('CPFONT');
+      uint8View.set(magic, offset);
+      offset += 6;
+
+      // Version (uint16)
+      view.setUint16(offset, 1, true);
+      offset += 2;
+
+      // Font family name (32 bytes)
+      const familyBytes = new TextEncoder().encode(familyName);
+      uint8View.set(familyBytes.slice(0, 32), offset);
+      offset += 32;
+
+      // Font size (uint8)
+      view.setUint8(offset, fontSize);
+      offset += 1;
+
+      // Glyph count (uint32)
+      view.setUint32(offset, glyphs.length, true);
+      offset += 4;
+
+      // Reserved (до headerSize)
+      offset = headerSize;
+
+      // Glyph entries
+      for (const glyph of glyphs) {
+        view.setUint32(offset, glyph.codePoint, true);
+        offset += 4;
+        view.setUint16(offset, glyph.width, true);
+        offset += 2;
+        view.setUint16(offset, glyph.height, true);
+        offset += 2;
+        view.setInt16(offset, glyph.left, true);
+        offset += 2;
+        view.setInt16(offset, glyph.top, true);
+        offset += 2;
+        view.setInt16(offset, glyph.advanceX, true);
+        offset += 2;
+        view.setInt16(offset, glyph.advanceY, true);
+        offset += 2;
+        view.setUint32(offset, glyph.dataOffset, true);
+        offset += 4;
+        view.setUint32(offset, glyph.dataLength, true);
+        offset += 4;
+      }
+
+      // Bitmap data
+      uint8View.set(new Uint8Array(bitmapData), offset);
+
+      return new Uint8Array(buffer);
+    }
+
+    // Инициализация при загрузке страницы
+    initFreeType();
+  </script>
+</body>
+</html>

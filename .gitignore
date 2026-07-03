@@ -43,3 +43,40 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Зависимости и build
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Android build
+android/.gradle/
+android/app/build/
+android/local.properties
+*.apk
+*.aab
+
+# iOS build (если есть)
+ios/Flutter/.last_build_id
+ios/.symlinks/
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Ключи и секреты (ВАЖНО!)
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*

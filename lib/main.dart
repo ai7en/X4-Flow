@@ -1,122 +1,244 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'converter_screen.dart';
+import 'wallpaper_screen.dart';
+import 'font_converter_screen.dart';
+import 'firmware_screen.dart';
+import 'transfer_screen.dart';
+import 'app_localizations.dart';
+import 'settings_screen.dart';
 
 void main() {
-  runApp(const MyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const XteinkApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class XteinkApp extends StatefulWidget {
+  const XteinkApp({super.key});
 
-  // This widget is the root of your application.
+  @override
+  State<XteinkApp> createState() => _XteinkAppState();
+}
+
+class _XteinkAppState extends State<XteinkApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+  Locale _locale = const Locale('ru');
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreferences();
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final themeIndex = prefs.getInt('themeMode') ?? 0;
+    final lang = prefs.getString('language') ?? 'ru';
+    setState(() {
+      _themeMode = ThemeMode.values[themeIndex];
+      _locale = Locale(lang);
+    });
+  }
+
+  void _updateLocale(Locale newLocale) {
+    setState(() => _locale = newLocale);
+  }
+
+  void _updateThemeMode(ThemeMode newMode) {
+    setState(() => _themeMode = newMode);
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
+      locale: _locale,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('ru'),
+        Locale('en'),
+      ],
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+        ),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+      ),
+      home: MainHomeScreen(
+        onLocaleChanged: _updateLocale,
+        onThemeChanged: _updateThemeMode,
+      ),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class MainHomeScreen extends StatefulWidget {
+  final ValueChanged<Locale> onLocaleChanged;
+  final ValueChanged<ThemeMode> onThemeChanged;
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  const MainHomeScreen({
+    super.key,
+    required this.onLocaleChanged,
+    required this.onThemeChanged,
+  });
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<MainHomeScreen> createState() => _MainHomeScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _MainHomeScreenState extends State<MainHomeScreen> {
+  int _currentIndex = 0;
+  Timer? _secretTimer; // 🎯 Таймер для секретной кнопки
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  final List<Widget> _screens = const [
+    ConverterScreen(),
+    WallpaperScreen(),
+    // FontConverterScreen скрыт из навигации
+    FirmwareScreen(),
+    TransferScreen(),
+  ];
+
+  String _getAppBarTitle(AppLocalizations loc) {
+    switch (_currentIndex) {
+      case 0:
+        return loc.translate('title_converter');
+      case 1:
+        return loc.translate('title_wallpapers');
+      case 2:
+        return loc.translate('tab_releases');
+      case 3:
+        return loc.translate('tab_wifi');
+      default:
+        return '';
+    }
+  }
+
+  void _openSecretFontConverter() {
+    _secretTimer?.cancel();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const FontConverterScreen(),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _secretTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final theme = Theme.of(context);
+    final loc = AppLocalizations.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+        title: Text(
+          _getAppBarTitle(loc),
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          // 🎯 СЕКРЕТНАЯ КНОПКА: удержание 7 секунд открывает конвертер шрифтов
+          // Используем onTapDown + Timer — самый надёжный способ
+          GestureDetector(
+            onTapDown: (_) {
+              // Запускаем таймер при касании
+              _secretTimer = Timer(const Duration(seconds: 5), () {
+                _openSecretFontConverter();
+              });
+            },
+            onTapUp: (_) {
+              // Отпустил палец — отменяем таймер
+              _secretTimer?.cancel();
+            },
+            onTapCancel: () {
+              // Касание отменено (палец ушёл за пределы) — отменяем
+              _secretTimer?.cancel();
+            },
+            onTap: () {
+              // Обычный тап — открывает настройки
+              _secretTimer?.cancel();
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => SettingsScreen(
+                    onLocaleChanged: widget.onLocaleChanged,
+                    onThemeChanged: widget.onThemeChanged,
+                  ),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12.0),
+              child: Icon(
+                Icons.settings_outlined,
+                color: theme.colorScheme.onSurface,
+              ),
             ),
-          ],
+          ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            color: theme.colorScheme.outlineVariant.withOpacity(0.4),
+            height: 1,
+          ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+      backgroundColor: theme.colorScheme.background,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (index) {
+          setState(() => _currentIndex = index);
+        },
+        backgroundColor: theme.colorScheme.surface,
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        height: 70,
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.library_books_outlined),
+            selectedIcon: const Icon(Icons.library_books),
+            label: loc.translate('tab_books'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.image_outlined),
+            selectedIcon: const Icon(Icons.image),
+            label: loc.translate('tab_wallpapers'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.cloud_download_outlined),
+            selectedIcon: const Icon(Icons.cloud_download),
+            label: loc.translate('tab_releases'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.wifi_outlined),
+            selectedIcon: const Icon(Icons.wifi),
+            label: loc.translate('tab_wifi'),
+          ),
+        ],
+      ),
     );
   }
 }
