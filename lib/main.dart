@@ -91,7 +91,6 @@ class _XteinkAppState extends State<XteinkApp> {
 class MainHomeScreen extends StatefulWidget {
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<ThemeMode> onThemeChanged;
-
   const MainHomeScreen({
     super.key,
     required this.onLocaleChanged,
@@ -104,12 +103,10 @@ class MainHomeScreen extends StatefulWidget {
 
 class _MainHomeScreenState extends State<MainHomeScreen> {
   int _currentIndex = 0;
-  Timer? _secretTimer; // 🎯 Таймер для секретной кнопки
-
   final List<Widget> _screens = const [
     ConverterScreen(),
     WallpaperScreen(),
-    // FontConverterScreen скрыт из навигации
+    FontConverterScreen(), // 🎯 ДОБАВЛЕНО: шрифты теперь в навигации
     FirmwareScreen(),
     TransferScreen(),
   ];
@@ -121,34 +118,20 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
       case 1:
         return loc.translate('title_wallpapers');
       case 2:
-        return loc.translate('tab_releases');
+        return loc.translate('title_font_converter'); // 🎯 НОВЫЙ заголовок
       case 3:
-        return loc.translate('tab_wifi');
+        return loc.translate('tab_releases');
+      case 4:
+        return loc.translate('title_wifi');
       default:
         return '';
     }
-  }
-
-  void _openSecretFontConverter() {
-    _secretTimer?.cancel();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const FontConverterScreen(),
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _secretTimer?.cancel();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final loc = AppLocalizations.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -156,26 +139,10 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         actions: [
-          // 🎯 СЕКРЕТНАЯ КНОПКА: удержание 7 секунд открывает конвертер шрифтов
-          // Используем onTapDown + Timer — самый надёжный способ
-          GestureDetector(
-            onTapDown: (_) {
-              // Запускаем таймер при касании
-              _secretTimer = Timer(const Duration(seconds: 5), () {
-                _openSecretFontConverter();
-              });
-            },
-            onTapUp: (_) {
-              // Отпустил палец — отменяем таймер
-              _secretTimer?.cancel();
-            },
-            onTapCancel: () {
-              // Касание отменено (палец ушёл за пределы) — отменяем
-              _secretTimer?.cancel();
-            },
-            onTap: () {
-              // Обычный тап — открывает настройки
-              _secretTimer?.cancel();
+          // 🎯 УБРАНА пасхалка - теперь обычная кнопка настроек
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (context) => SettingsScreen(
@@ -185,13 +152,6 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
                 ),
               );
             },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0),
-              child: Icon(
-                Icons.settings_outlined,
-                color: theme.colorScheme.onSurface,
-              ),
-            ),
           ),
         ],
         bottom: PreferredSize(
@@ -226,6 +186,11 @@ class _MainHomeScreenState extends State<MainHomeScreen> {
             icon: const Icon(Icons.image_outlined),
             selectedIcon: const Icon(Icons.image),
             label: loc.translate('tab_wallpapers'),
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.text_fields_outlined),
+            selectedIcon: const Icon(Icons.text_fields),
+            label: loc.translate('tab_fonts'),
           ),
           NavigationDestination(
             icon: const Icon(Icons.cloud_download_outlined),

@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:archive/archive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'device_profile.dart';
 import 'quote_templates.dart';
 import 'calendar_templates.dart';
@@ -27,9 +28,7 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
   bool _useDithering = true;
   DeviceModel _selectedModel = DeviceModel.x4;
   bool _hideControls = false;
-
   TemplateMode _mode = TemplateMode.photo;
-
   File? _selectedImage;
   ui.Image? _decodedUiImage;
   int _activeEditorTab = 0;
@@ -40,10 +39,8 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
   double _contrast = 1.0;
   bool _stretchToFill = false;
   int _rotation = 0;
-
   late int _selectedQuoteIndex;
   int _selectedBgIndex = 0;
-
   DateTime _calendarDate = DateTime(DateTime.now().year, DateTime.now().month);
   bool _calendarInverted = false;
   bool _isGeneratingYear = false;
@@ -90,16 +87,13 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-
     setState(() {
       final modeIdx = prefs.getInt(_kMode) ?? 0;
       if (modeIdx >= 0 && modeIdx < TemplateMode.values.length) {
         _mode = TemplateMode.values[modeIdx];
       }
-
       final modelIdx = prefs.getInt(_kModel) ?? 0;
       _selectedModel = modelIdx == 1 ? DeviceModel.x3 : DeviceModel.x4;
-
       _zoom = prefs.getDouble(_kZoom) ?? 1.0;
       _offsetX = prefs.getDouble(_kOffsetX) ?? 0.0;
       _offsetY = prefs.getDouble(_kOffsetY) ?? 0.0;
@@ -108,7 +102,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       _stretchToFill = prefs.getBool(_kStretch) ?? false;
       _useDithering = prefs.getBool(_kDithering) ?? true;
       _rotation = prefs.getInt(_kRotation) ?? 0;
-
       final qIdx = prefs.getInt(_kQuoteIndex);
       if (qIdx != null) {
         _selectedQuoteIndex = qIdx;
@@ -117,7 +110,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       if (bgIdx != null && bgIdx >= 0 && bgIdx < quoteBackgrounds.length) {
         _selectedBgIndex = bgIdx;
       }
-
       final cYear = prefs.getInt(_kCalYear) ?? DateTime.now().year;
       final cMonth = prefs.getInt(_kCalMonth) ?? DateTime.now().month;
       _calendarDate = DateTime(cYear, cMonth);
@@ -199,9 +191,7 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       Rect.fromLTWH(0, 0, profile.width.toDouble(), profile.height.toDouble()),
       Paint()..color = Colors.white,
     );
-
     canvas.save();
-
     if (_stretchToFill) {
       double scaleX = profile.width.toDouble() / image.width;
       double scaleY = profile.height.toDouble() / image.height;
@@ -215,9 +205,7 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       final scaleX = profile.width.toDouble() / effW;
       final scaleY = profile.height.toDouble() / effH;
       final baseScale = scaleX < scaleY ? scaleX : scaleY;
-
       double screenToPhysical = profile.width.toDouble() / profile.previewWidth;
-
       canvas.translate(
         (profile.width / 2.0) + (_offsetX * screenToPhysical),
         (profile.height / 2.0) + (_offsetY * screenToPhysical),
@@ -227,11 +215,9 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       canvas.translate(-image.width / 2, -image.height / 2);
       canvas.drawImage(image, Offset.zero, Paint()..colorFilter = ColorFilter.matrix(_createEinkMatrix()));
     }
-
     canvas.restore();
   }
 
-  // 🎯 Генерирует BMP для конкретного месяца (используется и для одиночного, и для годового)
   Future<Uint8List> _renderMonthBmp(DateTime monthDate, bool inverted, String langCode) async {
     final profile = deviceProfiles[_selectedModel]!;
     final recorder = ui.PictureRecorder();
@@ -241,7 +227,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
     final imgUi = await picture.toImage(profile.width, profile.height);
     final byteData = await imgUi.toByteData(format: ui.ImageByteFormat.rawRgba);
     final rgbaBytes = byteData!.buffer.asUint8List();
-
     var imageFromCanvas = img.Image.fromBytes(
       width: profile.width,
       height: profile.height,
@@ -255,16 +240,68 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
     return Uint8List.fromList(img.encodeBmp(finalImg));
   }
 
+  /// 🎯 Проверка разрешений по образцу converter_screen.dart
+  /// (работает и на Android 9-10, и на 11+)
+  Future<bool> _checkStoragePermission(AppLocalizations loc) async {
+    var storageStatus = await Permission.storage.status;
+    if (!storageStatus.isGranted) {
+      storageStatus = await Permission.storage.request();
+    }
+    var manageStatus = await Permission.manageExternalStorage.status;
+    if (!manageStatus.isGranted) {
+      manageStatus = await Permission.manageExternalStorage.request();
+    }
+    if (!storageStatus.isGranted && !manageStatus.isGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(loc.translate('converter_error_permission_hint')),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /// 🎯 Прямое сохранение в папку X4Flow/Wallpapers
+  Future<void> _saveBytesToWallpapersFolder(Uint8List bytes, String fileName) async {
+    final loc = AppLocalizations.of(context);
+    final targetDir = Directory('/storage/emulated/0/Download/X4Flow/Wallpapers');
+    if (!await targetDir.exists()) {
+      await targetDir.create(recursive: true);
+    }
+    final file = File('${targetDir.path}/$fileName');
+    int counter = 1;
+    while (await file.exists()) {
+      final nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+      final ext = fileName.substring(fileName.lastIndexOf('.'));
+      final newFile = File('${targetDir.path}/$nameWithoutExt ($counter)$ext');
+      if (!await newFile.exists()) {
+        await newFile.writeAsBytes(bytes);
+        return;
+      }
+      counter++;
+    }
+    await file.writeAsBytes(bytes);
+  }
+
   Future<void> _buildAndSaveBmp() async {
     setState(() { _isSaving = true; });
     final profile = deviceProfiles[_selectedModel]!;
     final langCode = Localizations.localeOf(context).languageCode;
-
+    final loc = AppLocalizations.of(context);
     try {
       await _saveSettings();
+
+      if (!await _checkStoragePermission(loc)) {
+        setState(() { _isSaving = false; });
+        return;
+      }
+
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, profile.width.toDouble(), profile.height.toDouble()));
-
       if (_mode == TemplateMode.photo && _decodedUiImage != null) {
         _drawPhotoOnCanvas(canvas, _decodedUiImage!, profile);
       } else if (_mode == TemplateMode.quote) {
@@ -272,24 +309,20 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
       } else if (_mode == TemplateMode.calendar) {
         drawCalendarOnCanvas(canvas, profile, _calendarDate, _calendarInverted, langCode);
       }
-
       final picture = recorder.endRecording();
       final imgUi = await picture.toImage(profile.width, profile.height);
       final byteData = await imgUi.toByteData(format: ui.ImageByteFormat.rawRgba);
       final rgbaBytes = byteData!.buffer.asUint8List();
-
       var imageFromCanvas = img.Image.fromBytes(
         width: profile.width,
         height: profile.height,
         bytes: rgbaBytes.buffer,
         order: img.ChannelOrder.rgba,
       );
-
       img.Image grayImage = img.grayscale(imageFromCanvas);
       img.Image finalEinkImg = _useDithering
           ? img.ditherImage(grayImage, quantizer: img.NeuralQuantizer(grayImage, numberOfColors: 16))
           : grayImage;
-
       final bmpBytes = Uint8List.fromList(img.encodeBmp(finalEinkImg));
 
       String fileName;
@@ -303,11 +336,16 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
         fileName = 'calendar_${_calendarDate.year}_${_calendarDate.month.toString().padLeft(2, '0')}_${profile.width}x${profile.height}.bmp';
       }
 
-      await FilePicker.platform.saveFile(
-        dialogTitle: AppLocalizations.of(context).translate('wallpaper_save_bmp'),
-        fileName: fileName,
-        bytes: bmpBytes,
-      );
+      await _saveBytesToWallpapersFolder(bmpBytes, fileName);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ Сохранено в Download/X4Flow/Wallpapers'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Ошибка создания BMP: $e');
       if (mounted) {
@@ -321,40 +359,38 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
     }
   }
 
-  // 📅 Генерация ZIP со всеми 12 месяцами года
   Future<void> _downloadYearCalendar() async {
     setState(() {
       _isGeneratingYear = true;
       _yearProgress = 0.0;
     });
-
     final profile = deviceProfiles[_selectedModel]!;
     final langCode = Localizations.localeOf(context).languageCode;
     final loc = AppLocalizations.of(context);
     final year = _calendarDate.year;
-
     try {
-      final archive = Archive();
+      if (!await _checkStoragePermission(loc)) {
+        setState(() {
+          _isGeneratingYear = false;
+          _yearProgress = 0.0;
+        });
+        return;
+      }
 
+      final archive = Archive();
       for (int month = 1; month <= 12; month++) {
         final monthDate = DateTime(year, month);
         final bmpBytes = await _renderMonthBmp(monthDate, _calendarInverted, langCode);
         final fileName = '${year}_${month.toString().padLeft(2, '0')}.bmp';
         archive.addFile(ArchiveFile(fileName, bmpBytes.length, bmpBytes));
-
         setState(() {
           _yearProgress = month / 12.0;
         });
       }
-
       final zipBytes = Uint8List.fromList(ZipEncoder().encode(archive)!);
       final zipName = 'calendar_${year}_${profile.width}x${profile.height}.zip';
 
-      await FilePicker.platform.saveFile(
-        dialogTitle: loc.translate('wallpaper_save_year'),
-        fileName: zipName,
-        bytes: zipBytes,
-      );
+      await _saveBytesToWallpapersFolder(zipBytes, zipName);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -389,7 +425,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
         _mode == TemplateMode.quote ||
         _mode == TemplateMode.calendar;
     final isBusy = _isSaving || _isGeneratingYear;
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       child: Column(
@@ -422,7 +457,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
             ),
           ),
           const SizedBox(height: 10),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -465,7 +499,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
             ],
           ),
           const Divider(height: 10),
-
           Expanded(
             child: Center(
               child: Padding(
@@ -549,7 +582,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
             ),
           ),
           const SizedBox(height: 12),
-
           if (_mode == TemplateMode.photo) ...[
             if (_selectedImage != null && !_hideControls)
               Card(
@@ -719,7 +751,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
                             maxLines: 2, overflow: TextOverflow.ellipsis);
                       }),
                       const SizedBox(height: 12),
-                      // 📋 ВЫПАДАЮЩИЙ СПИСОК СТИЛЕЙ (8 стилей)
                       DropdownButtonFormField<int>(
                         value: _selectedBgIndex < quoteBackgrounds.length ? _selectedBgIndex : 0,
                         decoration: InputDecoration(
@@ -797,8 +828,6 @@ class _WallpaperScreenState extends State<WallpaperScreen> with WidgetsBindingOb
               ),
             const SizedBox(height: 12),
           ],
-
-          // Нижние кнопки
           Row(
             children: [
               if (_mode == TemplateMode.photo)
@@ -883,7 +912,6 @@ class WallpaperPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     double scale = size.width / profile.width;
     canvas.scale(scale);
-
     if (mode == TemplateMode.photo && image != null) {
       drawPhoto(canvas, image!, profile);
     } else if (mode == TemplateMode.quote) {

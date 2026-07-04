@@ -163,7 +163,7 @@ class _ConverterScreenState extends State<ConverterScreen> {
         return;
       }
 
-      final targetDir = Directory('/storage/emulated/0/Download/Fb2Epub');
+      final targetDir = Directory('/storage/emulated/0/Download/X4Flow/Books');
       if (!await targetDir.exists()) {
         await targetDir.create(recursive: true);
       }
@@ -248,7 +248,7 @@ if (logCreated) {
             : 'Optimization complete!';
         final successFolder = _mode == ConverterMode.fb2ToEpub
             ? loc.translate('converter_dialog_success_folder')
-            : 'Download/Fb2Epub (with _optimized suffix)';
+            : 'Download/X4Flow/Books (with _optimized suffix)';
 
         String dialogContent = '${loc.translate('converter_success')}: $successCount\n'
     '📂 ${loc.translate('converter_dialog_success_path')}:\n$successFolder';

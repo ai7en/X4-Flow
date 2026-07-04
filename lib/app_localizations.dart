@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 class AppLocalizations {
   final Locale locale;
-
   AppLocalizations(this.locale);
 
   static AppLocalizations of(BuildContext context) {
@@ -32,20 +31,18 @@ class AppLocalizations {
       'ok': 'OK',
       'error': 'Ошибка',
       'success': 'Успешно',
-
       // Вкладки
       'tab_books': 'Книги',
       'tab_wallpapers': 'Обои',
       'tab_fonts': 'Шрифты',
       'tab_releases': 'Релизы',
-      'tab_wifi': 'Wi-Fi Панель',
-
+      'tab_wifi': 'Wi-Fi', // 🎯 СОКРАЩЕНО
       // AppBar заголовки
       'title_converter': 'Конвертер книг FB2 ➔ ePUB',
       'title_wallpapers': 'Конструктор обоев Xteink',
+      'title_font_converter': 'Конвертер шрифтов .cpfont',
       'title_releases': 'Релизы GitHub',
       'title_wifi': 'Подключение к Xteink',
-
       // Конвертер книг
       'converter_waiting': 'Ожидание выбора файлов',
       'converter_select': 'Выбрать файлы',
@@ -60,16 +57,14 @@ class AppLocalizations {
       'converter_dialog_success_title': 'Успешно!',
       'converter_dialog_success_path': 'Путь к файлам',
       'converter_dialog_success_folder':
-          'Внутренняя память ➔ Download ➔ Fb2Epub',
+          'Внутренняя память ➔ Download ➔ X4Flow ➔ Books', // 🎯 ОБНОВЛЕНО
       'converter_optimize_subtitle_fb2': 'Ресайз под %w×%h, grayscale, JPEG',
       'converter_optimize_subtitle_epub': 'Обязательно для EPUB оптимизации',
-      
       // 🆕 НОВЫЕ КЛЮЧИ ДЛЯ КОНВЕРТЕРА
       'converter_mode_fb2': 'FB2 ➔ EPUB',
       'converter_mode_optimize': 'Оптим. EPUB',
       'converter_target_device': 'Целевое устройство',
       'converter_optimize_images': '🎨 Оптимизировать картинки',
-
       // Обои
       'wallpaper_size': 'Размер',
       'wallpaper_select_photo': 'Выбрать фото',
@@ -98,7 +93,6 @@ class AppLocalizations {
       'wallpaper_year_generating': 'Генерация календаря:',
       'wallpaper_year_success': 'Календарь на год сохранён в ZIP',
       'wallpaper_save_year': 'Сохранить календарь на год',
-
       // Релизы GitHub
       'releases_github_limits': 'Лимиты GitHub API (Опционально)',
       'releases_token_hint':
@@ -120,7 +114,6 @@ class AppLocalizations {
       'releases_token_deleted': 'Токен удалён',
       'releases_save_token': 'Сохранить токен и обновить',
       'releases_clear_token': 'Очистить токен',
-
       // Wi-Fi панель
       'wifi_preparation': 'Подготовка читалки Xteink:',
       'wifi_step1':
@@ -130,11 +123,10 @@ class AppLocalizations {
       'wifi_step3': '3. Смартфон должен находиться в этой же Wi-Fi сети.',
       'wifi_address_label': 'Локальный адрес веб-панели',
       'wifi_address_hint': 'crosspoint.local или IP-адрес читалки',
-      'wifi_connect': 'Открыть веб-панель',  // 🎯 ИСПРАВЛЕНО: убрано "CrossInk"
+      'wifi_connect': 'Подключить', // 🎯 СОКРАЩЕНО
       'wifi_back': 'Назад',
       'wifi_refresh': 'Обновить',
       'wifi_disconnect': 'Отключиться',
-
       // Конвертер шрифтов
       'title_font_converter': 'Конвертер шрифтов .cpfont',
       'font_select_files': 'Файлы шрифтов',
@@ -155,6 +147,46 @@ class AppLocalizations {
       'font_mode_native': 'Нативный (Dart)',
       'font_mode_webview': 'WebView (WASM)',
       'font_error_not_ttf': 'Выберите файл .ttf или .otf',
+      'font_converting': 'Компиляция шрифтов...',
+      'font_progress': 'Обработка размера',
+            // 🆕 ДОПОЛНИТЕЛЬНЫЕ КЛЮЧИ ДЛЯ ШРИФТОВ (UI)
+      'font_files_section': 'Выбор файлов шрифтов (до 4 стилей)',
+      'font_regular_required': 'Regular .TTF/.OTF (обязательно)',
+      'font_regular_selected': 'Regular: ',
+      'font_optional_styles': 'Опциональные стили (если не выбраны — симуляция):',
+      'font_bold': 'Bold',
+      'font_italic': 'Italic',
+      'font_bold_italic': 'Bold Italic',
+      'font_crosspoint_params': 'Параметры CrossPoint',
+      'font_family_label': 'Font Family',
+      'font_family_helper': 'Имя папки и префикс файлов',
+      'font_sizes_label': 'Размеры:',
+      'font_unicode_label': 'Unicode диапазоны:',
+      'font_base_coverage_tooltip': 'Базовое покрытие (ASCII, Latin-1, основная типографика — тире/кавычки/троеточие) включено всегда и не показано отдельным пунктом.',
+      'font_custom_ranges_label': 'Дополнительные диапазоны (опционально)',
+      'font_custom_ranges_helper': 'Через запятую, например: (0x2900-0x29FF),(0x2E00-0x2EFF)',
+      'font_eink_settings': 'Настройки E-Ink',
+      'font_2bit_title': '2-Bit (4 оттенка серого)',
+      'font_compiling_progress': 'Компиляция: ',
+      'font_compile_button': 'Скомпилировать .cpfont',
+      'font_preview': 'Предпросмотр',
+      'font_preview_hint': 'Так же на устройстве синтезируются начертания, для которых не загружен отдельный файл — можно свериться заранее.',
+      'font_synthetic': ' (синтетика)',
+      'font_error_no_regular': 'Пожалуйста, выберите хотя бы Regular шрифт (.ttf/.otf)',
+      'font_error_empty_family': 'Имя семейства шрифта не может быть пустым',
+      'font_error_wrong_format': 'Неверный формат файла! Выберите .ttf или .otf',
+      'font_error_pick': 'Ошибка выбора файла: ',
+      'font_error_preview': 'Не удалось загрузить шрифт для превью: ',
+      'font_error_no_size': 'Выберите хотя бы один целевой размер шрифта',
+      'font_success_message': '✅ Все стили записаны в: ',
+      'font_error_convert': 'Ошибка выполнения: ',
+      'font_preset_cyrillic': 'Кириллица',
+      'font_preset_latin_ext': 'Латиница расширенная (европейские языки)',
+      'font_preset_greek': 'Греческий',
+      'font_preset_symbols': 'Символы и стрелки',
+      'font_range_latin_ext': 'Латиница расширенная (европейские языки)',
+      'font_range_greek': 'Греческий',
+      'font_range_symbols': 'Символы и стрелки',
     },
     'en': {
       // General
@@ -175,20 +207,18 @@ class AppLocalizations {
       'ok': 'OK',
       'error': 'Error',
       'success': 'Success',
-
       // Tabs
       'tab_books': 'Books',
       'tab_wallpapers': 'Wallpapers',
       'tab_fonts': 'Fonts',
       'tab_releases': 'Releases',
-      'tab_wifi': 'Wi-Fi Panel',
-
+      'tab_wifi': 'Wi-Fi', // 🎯 SHORTENED
       // AppBar titles
       'title_converter': 'FB2 ➔ ePUB Converter',
       'title_wallpapers': 'Wallpaper Generator',
+      'title_font_converter': '.cpfont Font Converter',
       'title_releases': 'GitHub Releases',
       'title_wifi': 'Xteink Connection',
-
       // Converter
       'converter_waiting': 'Waiting for file selection',
       'converter_select': 'Select files',
@@ -202,16 +232,14 @@ class AppLocalizations {
       'converter_dialog_success_title': 'Success!',
       'converter_dialog_success_path': 'File path',
       'converter_dialog_success_folder':
-          'Internal storage ➔ Download ➔ Fb2Epub',
+          'Internal storage ➔ Download ➔ X4Flow ➔ Books', // 🎯 UPDATED
       'converter_optimize_subtitle_fb2': 'Resize to %w×%h, grayscale, JPEG',
       'converter_optimize_subtitle_epub': 'Required for EPUB optimization',
-      
       // 🆕 NEW KEYS FOR CONVERTER
       'converter_mode_fb2': 'FB2 ➔ EPUB',
       'converter_mode_optimize': 'Opt. EPUB',
       'converter_target_device': 'Target device',
       'converter_optimize_images': '🎨 Optimize images',
-
       // Wallpapers
       'wallpaper_size': 'Size',
       'wallpaper_select_photo': 'Select photo',
@@ -240,7 +268,6 @@ class AppLocalizations {
       'wallpaper_year_generating': 'Generating calendar:',
       'wallpaper_year_success': 'Year calendar saved to ZIP',
       'wallpaper_save_year': 'Save year calendar',
-
       // Font converter
       'title_font_converter': '.cpfont Font Converter',
       'font_select_files': 'Font files',
@@ -261,7 +288,46 @@ class AppLocalizations {
       'font_mode_native': 'Native (Dart)',
       'font_mode_webview': 'WebView (WASM)',
       'font_error_not_ttf': 'Please select .ttf or .otf file',
-
+      'font_converting': 'Compiling fonts...',
+      'font_progress': 'Processing size',
+            // 🆕 ADDITIONAL FONT UI KEYS
+      'font_files_section': 'Font files (up to 4 styles)',
+      'font_regular_required': 'Regular .TTF/.OTF (required)',
+      'font_regular_selected': 'Regular: ',
+      'font_optional_styles': 'Optional styles (if not selected — simulated):',
+      'font_bold': 'Bold',
+      'font_italic': 'Italic',
+      'font_bold_italic': 'Bold Italic',
+      'font_crosspoint_params': 'CrossPoint parameters',
+      'font_family_label': 'Font Family',
+      'font_family_helper': 'Folder name and file prefix',
+      'font_sizes_label': 'Sizes:',
+      'font_unicode_label': 'Unicode ranges:',
+      'font_base_coverage_tooltip': 'Base coverage (ASCII, Latin-1, basic typography — dashes/quotes/ellipsis) is always included and not shown separately.',
+      'font_custom_ranges_label': 'Additional ranges (optional)',
+      'font_custom_ranges_helper': 'Comma-separated, e.g.: (0x2900-0x29FF),(0x2E00-0x2EFF)',
+      'font_eink_settings': 'E-Ink settings',
+      'font_2bit_title': '2-Bit (4 shades of gray)',
+      'font_compiling_progress': 'Compiling: ',
+      'font_compile_button': 'Compile .cpfont',
+      'font_preview': 'Preview',
+      'font_preview_hint': 'Also on device, styles without separate files are synthesized — you can check in advance.',
+      'font_synthetic': ' (synthetic)',
+      'font_error_no_regular': 'Please select at least a Regular font (.ttf/.otf)',
+      'font_error_empty_family': 'Font family name cannot be empty',
+      'font_error_wrong_format': 'Wrong file format! Select .ttf or .otf',
+      'font_error_pick': 'File selection error: ',
+      'font_error_preview': 'Failed to load font for preview: ',
+      'font_error_no_size': 'Select at least one target font size',
+      'font_success_message': '✅ All styles saved to: ',
+      'font_error_convert': 'Execution error: ',
+      'font_preset_cyrillic': 'Cyrillic',
+      'font_preset_latin_ext': 'Latin Extended (European languages)',
+      'font_preset_greek': 'Greek',
+      'font_preset_symbols': 'Symbols and arrows',
+      'font_range_latin_ext': 'Latin Extended (European languages)',
+      'font_range_greek': 'Greek',
+      'font_range_symbols': 'Symbols and arrows',
       // Releases
       'releases_github_limits': 'GitHub API Limits (Optional)',
       'releases_token_hint':
@@ -283,7 +349,6 @@ class AppLocalizations {
       'releases_token_deleted': 'Token deleted',
       'releases_save_token': 'Save token and refresh',
       'releases_clear_token': 'Clear token',
-
       // Wi-Fi
       'wifi_preparation': 'Xteink reader preparation:',
       'wifi_step1':
@@ -293,7 +358,7 @@ class AppLocalizations {
       'wifi_step3': '3. Smartphone must be on the same Wi-Fi network.',
       'wifi_address_label': 'Local web panel address',
       'wifi_address_hint': 'crosspoint.local or reader IP address',
-      'wifi_connect': 'Open web panel',  // 🎯 FIXED: removed "CrossInk"
+      'wifi_connect': 'Connect', // 🎯 SHORTENED
       'wifi_back': 'Back',
       'wifi_refresh': 'Refresh',
       'wifi_disconnect': 'Disconnect',

@@ -43,7 +43,7 @@ class NativeFontConverter {
   static const int intervalSize = 12;
   static const int glyphSize = 16;
 
-  Future<Map<int, Uint8List>> convert({
+    Future<Map<int, Uint8List>> convert({
     required Uint8List regularFont,
     Uint8List? boldFont,
     Uint8List? italicFont,
@@ -52,6 +52,7 @@ class NativeFontConverter {
     required List<int> sizes,
     required List<List<int>> intervals,
     bool is2Bit = true,
+    void Function(int current, int total)? onProgress,
   }) async {
     await _registerFont(regularFont, fontFamily);
     if (boldFont != null) await _registerFont(boldFont, '$fontFamily Bold');
@@ -130,6 +131,9 @@ class NativeFontConverter {
       );
 
       results[fontSizePt] = binaryData;
+      if (onProgress != null) {
+        onProgress(activeSizes.indexOf(fontSizePt) + 1, activeSizes.length);
+      }
     }
 
     return results;
