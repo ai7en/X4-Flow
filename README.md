@@ -28,10 +28,10 @@
    * Парсинг актуальных OTA-сборок (`.bin`) напрямую из официальных GitHub-репозиториев экосистемы:
      * `CrossInk (uxjulia)`
      * `Inx (obijuankenobiii)`
-     * `CrossPoint Reader`
+     * `CrossPoint Reader` (CrossPoint)
      * `vCodex (franssjz / alrudimgn)`
-     * `Papyrix`
-     * `AALU`
+     * `Papyrix` (bigbag)
+     * `AALU` (dawsonfi)
    * Скачивание файлов прошивок во внутреннюю память телефона для последующей загрузки.
 
 5. **🌐 Локальная Wi-Fi Панель**
