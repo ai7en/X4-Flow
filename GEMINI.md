@@ -1,95 +1,95 @@
-# 🧠 AI Context & Архитектурная Спецификация проекта "X4 Flow"
+# AI Development Guidelines & System Context for X4 Flow 🌊
 
-Этот файл содержит критически важный контекст разработки, низкоуровневые спецификации форматов и описания платформенных обходов (workarounds). 
-
-⚠️ **ИНСТРУКЦИЯ ДЛЯ ИИ:** Перед генерацией любого кода, изменением путей или рефакторингом модулей передачи данных и компиляции шрифтов, обязательно сверяйтесь с этим документом. Не удаляйте платформенные хаки в `TransferScreen` и формулы компенсации метрик в `NativeFontConverter`.
+This document serves as the system prompt and architectural source of truth for AI agents (like Gemini) working on the **X4 Flow** project within Firebase Studio / Project IDX. It outlines the codebase structure, strict constraints, and module logic to prevent regression and compilation errors.
 
 ---
 
-## 1. Общие сведения и глобальные константы
+## 1. Environment & Workspace Context
 
-* **Имя пакета в коде:** `myapp` (в `pubspec.yaml`). Все внутренние импорты используют вид: `package:myapp/...`.
-* **Имя для пользователя (UI/Манифест):** `X4 Flow`.
-* **Целевая платформа:** Android смартфона (минимальный SDK ориентирован на современные версии с жестким Scoped Storage, вплоть до API 34+).
-* **Назначение:** Инструментарий подготовки контента и обслуживания e-ink автономных читалок семейства **Xteink (X3 / X4)** на базе плат микроконтроллеров **ESP32**, работающих на базе операционной системы **CrossPoint** и её форков.
-
-### Профили устройств (`lib/device_profile.dart`)
-При генерации графики, обоев или оптимизации книг необходимо строго закладываться на физические разрешения матриц:
-* **DeviceModel.x4 (Xteink X4):** `480 × 800` пикселей.
-* **DeviceModel.x3 (Xteink X3):** `528 × 792` пикселей.
+* **IDE Environment:** Project IDX / Firebase Studio (Code OSS based).
+* **Framework:** Flutter (Stable channel), Dart with strict Null Safety.
+* **Target Platforms:** Android (Smartphones acting as a companion for ESP32 hardware).
+* **Entry Point:** `lib/main.dart`
+* **Configuration:** `.idx/dev.nix` handles system packages (`pkgs.flutter`, `pkgs.dart`).
 
 ---
 
-## 2. Карта файлов и архитектурные модули (19 файлов)
+## 2. Project Architecture & Core Modules
 
-Приложение построено по модульному принципу без тяжелых стейт-менеджеров (используется классический `StatefulWidget` для изоляции состояний экранов).
-lib/
-├── main.dart                      # Точка входа, корневой навигатор (IndexedStack), Material 3 тема.
-├── app_localizations.dart         # Двуязычная локализация (ru/en) без кодогенерации.
-├── device_profile.dart            # Конфигурация физических разрешений e-ink дисплеев.
-│
-├── converter_screen.dart          # UI пакетного конвертера FB2 ➔ EPUB и оптимизатора EPUB.
-├── fb2_to_epub.dart               # Парсер FB2 с кастомным декодером Windows-1251 и сборщик zip-архива EPUB.
-├── epub_optimizer.dart            # Графический процессор: ресайз, Grayscale, удаление альфа-канала внутри EPUB.
-│
-├── font_converter_screen.dart     # Скрытый UI (пасхалка) для пакетной сборки 4 стилей шрифта.
-├── native_font_converter.dart     # Бинарный компилятор TTF/OTF в проприетарный формат .cpfont.
-│
-├── wallpaper_screen.dart          # UI графического редактора заставок (Фото / Цитаты / Календари).
-├── calendar_templates.dart        # Canvas-отрисовка сеток календарей (включая пакетный экспорт года в ZIP).
-├── book_quote.dart                # Модель данных структуры цитаты.
-├── quote_templates.dart           # Движок отрисовки 8 стилей цитат на ui.Canvas.
-├── quotes_ru.dart                 # База цитат на русском языке.
-├── quotes_en.dart                 # База цитат на английском языке.
-│
-├── firmware_screen.dart           # Парсер GitHub API и загрузчик системных .bin прошивок экосистемы.
-├── transfer_screen.dart           # Модуль Wi-Fi интеграции с книгой через WebView с файловым мостом.
-└── settings_screen.dart           # Панель глобальных настроек (язык, тема, инфо).
+The application is a companion app for E-Ink e-readers (**Xteink X4** and **Xteink X3**) running on ESP32 microcontrollers. It features 5 primary tabs managed via an `IndexedStack` in `main.dart`:
 
----
+1. **Books Converter (`lib/converter_screen.dart`, `lib/fb2_to_epub.dart`, `lib/epub_optimizer.dart`)**
+   * Converts local `.fb2` files to valid `.epub` structures.
+   * Uses `EpubOptimizer` to parse the OPF manifest, process images into grayscale, resize them to target screen resolutions, and package them using the `archive` library.
+   * Handles footnotes seamlessly without breaking layout.
 
-## 3. Скрытые функции и Логика Навигации (Важно для ИИ)
+2. **Wallpaper Generator (`lib/wallpaper_screen.dart`, `lib/quote_templates.dart`, `lib/calendar_templates.dart`)**
+   * **Photo Mode:** Custom image cropping, rotation, brightness/contrast adjustments, and Floyd-Steinberg Dithering to support low bit-depth E-Ink screens.
+   * **Quote Mode:** Renders local literary quotes using predefined design themes (`quoteBackgrounds`). Supports English and Russian datasets (`quotes_en.dart`, `quotes_ru.dart`).
+   * **Calendar Mode:** Draws a calendar grid onto a native canvas for the current month.
 
-* **Нижний NavigationBar** в `main.dart` отображает только **4 вкладки**: Книги (Конвертер), Обои, Релизы (Прошивки) и Wi-Fi Панель.
-* 🔑 **Экран Шрифтов (`FontConverterScreen`) скрыт из основного меню.** Доступ к нему осуществляется через «пасхалку» на главном экране: необходимо **удерживать кнопку настроек (иконку шестеренки) в AppBar в течение 5 секунд**. При генерации изменений в `main.dart` этот таймер и логика перехода (`Navigator.push`) не должны быть удалены или заменены на стандартную вкладку.
+3. **Font Compiler (`lib/font_converter_screen.dart`, `lib/native_font_converter.dart`)**
+   * Compiles standard desktop fonts into custom binary `.cpfont` files for CrossPoint firmware.
+   * Bundles **4 distinct sub-styles** (Regular, Bold, Italic, BoldItalic) inside a single file payload.
+   * Supports packing character ranges (ASCII, Cyrillic, Latin) and encodes bitmaps into a **2-Bit (4 levels of gray)** matrix for text anti-aliasing on E-Ink displays.
+
+4. **Firmware Manager (`lib/firmware_screen.dart`)**
+   * Connects to GitHub Releases API using `Dio` to fetch compiled ecosystem OTA binaries (`.bin`).
+   * Monitored repositories: `uxjulia/CrossInk`, `obijuankenobiii/inx`, `crosspoint-reader/crosspoint-reader`, `franssjz/cpr-vcodex`, `alrudimgn/cpr-vcodex-fork`, `dawsonfi/papyrix-reader`.
+   * Requires optional GitHub Token storage in `SharedPreferences`.
+
+5. **Wi-Fi Web Panel (`lib/transfer_screen.dart`)**
+   * Hosts an embedded `WebViewController` pointed at `http://crosspoint.local` or a user-defined IP address to manage wireless book delivery to the device.
 
 ---
 
-## 4. Спецификация бинарного формата `.cpfont` (v4)
+## 3. 🛑 CRITICAL CODING RULES & CONSTRAINTS
 
-Модуль `NativeFontConverter` компилирует векторный шрифт в растровый формат, понятный микроконтроллеру ESP32. 
+When writing or modifying code for this project, the AI **MUST NOT** violate these design boundaries:
 
-### Структура файла:
-1.  **Магические байты (Header):** Строго первые 8 байт: `CPFONT\x00\x00`.
-2.  **Глобальные метрики (Header Size = 32 байта):** Записываются `advanceY`, `ascender`, `descender` (в формате Int32, Little Endian).
-3.  **Оглавление Стилей (Style TOC):** Выделяется по 32 байта под каждый из 4-х стилей (`Regular`, `Bold`, `Italic`, `BoldItalic`). Хранит смещения (Offsets) внутри файла для данных конкретного стиля.
-4.  **Блоки интервалов (Intervals):** Диапазоны символов (ASCII, Кириллица и т.д.). Каждый интервал занимает 12 байт (`startCodePoint`, `endCodePoint`, `startGlyphIndex`).
-5.  **Данные глифа (Glyph Data Structure = 16 байт на символ):**
-    * `width` (1 байт), `height` (1 байт) — физический размер растра буквы.
-    * `advanceX` (2 байта, UInt16, Little Endian) — шаг каретки.
-    * `left` (2 байта, Int16, Little Endian) — смещение по оси X.
-    * `top` (2 байта, Int16, Little Endian) — смещение по оси Y от базовой линии вверх.
-    * `bitmapLength` (2 байта, UInt16).
-    * Поток байт растровой маски символа (битмап).
+### Rule 3.1: Avoid FontStyle Name Collisions
+* **Context:** The custom font compiler operates with an enum for the 4 styles. 
+* **The Error:** A bare `enum FontStyle` collides with Flutter's built-in `ui.FontStyle` (which only supports `normal` and `italic`).
+* **The Fix:** The custom font enum must be named **`CpFontStyle`** inside `lib/native_font_converter.dart`:
+  ```dart
+  enum CpFontStyle { regular, bold, italic, boldItalic }
+  When building text rendering widgets or previews, explicitly map CpFontStyle to ui.FontStyle and FontWeight:
+  fontStyle: (style == CpFontStyle.italic || style == CpFontStyle.boldItalic) 
+    ? ui.FontStyle.italic 
+    : ui.FontStyle.normal,
+fontWeight: (style == CpFontStyle.bold || style == CpFontStyle.boldItalic) 
+    ? FontWeight.bold 
+    : FontWeight.normal,
+    Rule 3.2: E-Ink Target Dimensions
+Never hardcode screen layout dimensions or aspect ratios for image optimization/canvas painting. Always query the model-specific configurations defined in lib/device_profile.dart:
 
-### КРИТИЧЕСКИЕ ХАКИ внутри `native_font_converter.dart`:
-* **Масштабирование (Коэффициент 2.1):** Физический рендеринг Flutter-движка выдавал глифы меньшего размера, чем требовалось системе CrossPoint. Внедрена компенсация: `fontSizePt * 2.1`. Не уменьшать это значение.
-* **Инверсия метрики `top`:** Формат `.cpfont` требует, чтобы смещение верхней границы чернил от базовой линии шло вверх (положительное значение). В коде зафиксировано: `baseline - minY` (вместо стандартного `minY - baseline`).
-* **Прямая шкала битмапы:** Аппаратный рендеринг прошивки книги (`GfxRenderer.cpp`) самостоятельно инвертирует биты при чтении растра (`3 - raw_value`). Поэтому в коде Flutter-компилятора данные упаковываются в **прямой шкале плотности** (0 — пустой фон, 3 — максимальное количество чернил для 2-Bit режима). Не инвертировать байты при упаковке!
-* **Tight Crop:** Алгоритм вычисляет реальные границы чернил символа (Bounding Box), отбрасывая пустые пиксели со всех четырех сторон, что экономит оперативную память (RAM) на микроконтроллере.
+Xteink X4: 480 × 800 pixels (DeviceModel.x4)
 
----
+Xteink X3: 528 × 792 pixels (DeviceModel.x3)
 
-## 5. Платформенные Workarounds и Безопасность (Android)
+Rule 3.3: Localization Framework
+Do not use standard BuildContext or .arb generation files. The project relies on a lightweight internal localization class (lib/app_localizations.dart).
 
-### Манифест и Сеть (`AndroidManifest.xml`)
-* Установлен флаг `android:usesCleartextTraffic="true"`. Это необходимо, поскольку e-ink читалки поднимают локальный HTTP веб-сервер (без SSL/HTTPS) по адресу вида `http://192.168.x.x` или `http://crosspoint.local`. Без этого флага Android блокирует сетевые запросы WebView.
-
-### Файловый мост в WebView (`TransferScreen`)
-Современные ограничения Android (Scoped Storage) запрещают передавать нативные пути к файлам напрямую в стандартный тег `<input type="file">` внутри WebView. 
-* **Решение в коде:** Внедрен явный перехват коллбэка `onShowFileSelector` через `AndroidWebViewController`.
-* При выборе файлов (книг, обоев, шрифтов) через `FilePicker`, приложение принудительно копирует выбранный ассет во временную изолированную директорию (`Directory.systemTemp`), регистрирует валидный нативный URI (`file://...`) и только после этого возвращает его в поток WebView.
-* **Внимание:** Любые попытки «упростить» этот код и вернуть путь напрямую приведут к ошибкам `Permission Denied` или пустым файлам на стороне читалки.
-
-### Оптимизация EPUB (`epub_optimizer.dart`)
-* При декомпрессии и сжатии изображений внутри EPUB, картинки переводятся в Grayscale, но сохраняются **в их исходном формате** (JPEG/PNG), чтобы не нарушать внутренние манифесты книги (`content.opf` и XHTML-разметку страниц), так как e-ink читалка жестко валидирует типы данных по MIME-типам.
+When adding UI text elements, provide strings for both 'ru' and 'en' in the _localizedValues map inside app_localizations.dart and display them using:
+AppLocalizations.of(context).translate('your_localization_key')
+Rule 3.4: Asynchronous Operations and Mounted Checks
+When handling operations inside screens (e.g., downloading firmware in firmware_screen.dart or waiting for files in converter_screen.dart), always verify state freshness if calling setState or modifying context after an await block:
+if (!mounted) return;
+setState(() { ... });
+Rule 3.5: Git Conflicts Resolution Instruction
+If a push rejection error occurs (! [rejected] main -> main (fetch first)), it indicates that remote changes exist. Instruct the user to synchronize upstream tracking branches cleanly via rebase:
+git pull --rebase
+4. Firebase MCP Server Configuration
+When configuring or managing backend bindings inside Project IDX / Firebase Studio, apply the following setup inside .idx/mcp.json without altering other keys:
+{
+    "mcpServers": {
+        "firebase": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "firebase-tools@latest",
+                "experimental:mcp"
+            ]
+        }
+    }
+}
