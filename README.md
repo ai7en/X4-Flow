@@ -57,3 +57,10 @@
   * `dio` — скачивание прошивок с GitHub API.
   * `webview_flutter` — интеграция веб-панели управления.
   * `shared_preferences` — сохранение настроек языка, темы и GitHub-токенов.
+
+## 🤝 Credits & Acknowledgments
+
+Проект X4 Flow разработан благодаря открытым наработкам E-Ink сообщества:
+* **Спецификация шрифтов (.cpfont):** Логика бинарной компиляции и структуры 2-битных шрифтов разработана на основе проекта [cpfont-editor от iwalton3](https://github.com/iwalton3/cpfont-editor).
+* **Конвертер книг (FB2 ➔ ePUB):** Алгоритмы обработки структуры электронных книг, разбора метаданных и логики сносок вдохновлены и адаптированы из исходного кода [Calibre от Kovid Goyal](https://github.com/kovidgoyal/calibre) (лицензия GPLv3).
+* **Экосистема прошивок:** Благодарность разработчикам OTA-сборок для читалк на ESP32 — [CrossPoint (crosspoint-reader)](https://github.com/crosspoint-reader), [uxjulia (CrossInk)](https://github.com/uxjulia), [obijuankenobiii (Inx)](https://github.com/obijuankenobiii), [vCodex](https://github.com/franssjz), [bigbag (papyrix-reader)](https://github.com/bigbag), [alrudimgn (cpr-vcodex-fork)](https://github.com/alrudimgn) и команде [dawsonfi (AALU)](https://github.com/dawsonfi).

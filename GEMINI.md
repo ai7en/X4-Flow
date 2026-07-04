@@ -22,6 +22,7 @@ The application is a companion app for E-Ink e-readers (**Xteink X4** and **Xtei
    * Converts local `.fb2` files to valid `.epub` structures.
    * Uses `EpubOptimizer` to parse the OPF manifest, process images into grayscale, resize them to target screen resolutions, and package them using the `archive` library.
    * Handles footnotes seamlessly without breaking layout.
+   * Layout, metadata handling, and footnote mechanics are ported/inspired by the Core Python implementation of [kovidgoyal/calibre](https://github.com/kovidgoyal/calibre).
 
 2. **Wallpaper Generator (`lib/wallpaper_screen.dart`, `lib/quote_templates.dart`, `lib/calendar_templates.dart`)**
    * **Photo Mode:** Custom image cropping, rotation, brightness/contrast adjustments, and Floyd-Steinberg Dithering to support low bit-depth E-Ink screens.
@@ -32,6 +33,7 @@ The application is a companion app for E-Ink e-readers (**Xteink X4** and **Xtei
    * Compiles standard desktop fonts into custom binary `.cpfont` files for CrossPoint firmware.
    * Bundles **4 distinct sub-styles** (Regular, Bold, Italic, BoldItalic) inside a single file payload.
    * Supports packing character ranges (ASCII, Cyrillic, Latin) and encodes bitmaps into a **2-Bit (4 levels of gray)** matrix for text anti-aliasing on E-Ink displays.
+   * Binary structure (headers, character mapping table, 2-bit grayscale matrices) follows the specifications established in [iwalton3/cpfont-editor](https://github.com/iwalton3/cpfont-editor).
 
 4. **Firmware Manager (`lib/firmware_screen.dart`)**
    * Connects to GitHub Releases API using `Dio` to fetch compiled ecosystem OTA binaries (`.bin`).
