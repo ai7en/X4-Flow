@@ -60,7 +60,9 @@
 
 ## 🤝 Credits & Acknowledgments
 
-Проект X4 Flow разработан благодаря открытым наработкам E-Ink сообщества:
-* **Спецификация шрифтов (.cpfont):** Логика бинарной компиляции и структуры 2-битных шрифтов разработана на основе проекта [cpfont-editor от iwalton3](https://github.com/iwalton3/cpfont-editor).
-* **Конвертер книг (FB2 ➔ ePUB):** Алгоритмы обработки структуры электронных книг, разбора метаданных и логики сносок вдохновлены и адаптированы из исходного кода [Calibre от Kovid Goyal](https://github.com/kovidgoyal/calibre) (лицензия GPLv3).
-* **Экосистема прошивок:** Благодарность разработчикам OTA-сборок для читалк на ESP32 — [CrossPoint (crosspoint-reader)](https://github.com/crosspoint-reader), [uxjulia (CrossInk)](https://github.com/uxjulia), [obijuankenobiii (Inx)](https://github.com/obijuankenobiii), [vCodex](https://github.com/franssjz), [bigbag (papyrix-reader)](https://github.com/bigbag), [alrudimgn (cpr-vcodex-fork)](https://github.com/alrudimgn) и команде [dawsonfi (AALU)](https://github.com/dawsonfi).
+Проект **X4 Flow** разработан благодаря открытым наработкам E-Ink сообщества и современным технологиям:
+
+* **Конвертер книг (FB2 ➔ ePUB):** Алгоритмы обработки структуры электронных книг, разбора метаданных и логики примечаний вдохновлены и адаптированы из исходного кода [Calibre от Kovid Goyal](https://github.com/kovidgoyal/calibre) (GPLv3) и парсеров [fb2converter от rupor-github](https://github.com/rupor-github/fb2converter).
+* **Спецификация и калибровка шрифтов (.cpfont):** Логика бинарной компиляции спроектирована на основе репозитория [cpfont-editor от iwalton3](https://github.com/iwalton3/cpfont-editor). Точная настройка отображения, базовых диапазонов, инверсии и расчет метрик (ascender/descender) выполнены путем реверс-инжиниринга и анализа эталонных шрифтов с официального сайта [CrossPoint Reader Fonts](https://crosspointreader.com/fonts).
+* **Экосистема прошивок:** Огромная благодарность разработчикам прошивок — [CrossPoint (crosspoint-reader)](https://github.com/crosspoint-reader), [uxjulia (CrossInk)](https://github.com/uxjulia), [obijuankenobiii (Inx)](https://github.com/obijuankenobiii), [vCodex](https://github.com/franssjz), [bigbag (papyrix-reader)](https://github.com/bigbag), [alrudimgn (cpr-vcodex-fork)](https://github.com/alrudimgn) и команде [dawsonfi (AALU)](https://github.com/dawsonfi).
+* **AI Assistance:** Проектирование архитектуры приложения, оптимизация алгоритмов дизеринга и рефакторинг кода выполнены при поддержке языковых моделей **Gemini**, **Qwen** и **Claude**.

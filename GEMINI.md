@@ -34,6 +34,7 @@ The application is a companion app for E-Ink e-readers (**Xteink X4** and **Xtei
    * Bundles **4 distinct sub-styles** (Regular, Bold, Italic, BoldItalic) inside a single file payload.
    * Supports packing character ranges (ASCII, Cyrillic, Latin) and encodes bitmaps into a **2-Bit (4 levels of gray)** matrix for text anti-aliasing on E-Ink displays.
    * Binary structure (headers, character mapping table, 2-bit grayscale matrices) follows the specifications established in [iwalton3/cpfont-editor](https://github.com/iwalton3/cpfont-editor).
+   * Visual parameters, anti-aliasing logic, pixel ratios, and custom baseline coverages are reverse-engineered and strictly calibrated against reference files from [crosspointreader.com/fonts](https://crosspointreader.com/fonts).
 
 4. **Firmware Manager (`lib/firmware_screen.dart`)**
    * Connects to GitHub Releases API using `Dio` to fetch compiled ecosystem OTA binaries (`.bin`).
