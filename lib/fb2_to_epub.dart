@@ -951,8 +951,7 @@ $navMap</navMap>
   margin-bottom: 0.5em;
   margin-top: 0;
   text-indent: 0;
-  padding-left: 1.5em;
-  text-align: left;
+  text-align: justify;
 }
 .text-author {
   text-indent: 0;

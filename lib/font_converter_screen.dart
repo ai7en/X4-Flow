@@ -104,7 +104,10 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
   File? _boldFile;
   File? _italicFile;
   File? _boldItalicFile;
-  final Map<int, bool> _sizes = {12: true, 14: true, 16: true, 18: true, 20: false, 24: false};
+  final Map<int, bool> _sizes = {
+  8: false, 10: false, 12: true, 14: true, 16: true, 18: true,
+  20: false, 22: false, 24: false, 26: false, 28: false, 30: false,
+};
   final Map<String, bool> _ranges = {
     for (final preset in kUnicodePresets) preset.key: preset.key == 'font_range_cyrillic',
   };

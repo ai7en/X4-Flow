@@ -18,6 +18,11 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
   final Dio _dio = Dio();
   final TextEditingController _tokenController = TextEditingController();
 
+  // 🎯 КЭШ GitHub API — чтобы не долбить API при каждом открытии
+  DateTime? _lastFetchTime;
+  Map<String, List<dynamic>> _cachedReleases = {};
+  static const int _cacheTtlMinutes = 15;
+
   // 🎯 Обновленный список репозиториев экосистемы CrossPoint / Xteink
   final List<Map<String, String>> _repositories = [
     {'name': 'CrossInk (uxjulia)', 'repo': 'uxjulia/CrossInk'},
@@ -33,7 +38,6 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
   List<dynamic> _releases = [];
   dynamic _selectedRelease;
   List<dynamic> _binAssets = [];
-
   bool _isLoadingReleases = false;
   bool _isDownloading = false;
   bool _isTokenSaved = false;
@@ -88,7 +92,6 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
     final loc = AppLocalizations.of(context);
     final token = _tokenController.text.trim();
     final prefs = await SharedPreferences.getInstance();
-
     if (token.isEmpty) {
       await prefs.remove('github_token');
       setState(() => _isTokenSaved = false);
@@ -116,8 +119,34 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
     }
   }
 
-  Future<void> _fetchReleases() async {
+  /// 🎯 УМНАЯ ЗАГРУЗКА: проверяет кэш перед сетевым запросом
+  /// Если кэш свежий (< 15 минут) — отдаём его, не трогая GitHub API
+  Future<void> _fetchReleases({bool forceRefresh = false}) async {
     final loc = AppLocalizations.of(context);
+    final repoKey = _selectedRepo['repo']!;
+    final now = DateTime.now();
+
+    // 🎯 ПРОВЕРКА КЭША: если не принудительное обновление и кэш свежий
+    if (!forceRefresh &&
+        _cachedReleases.containsKey(repoKey) &&
+        _lastFetchTime != null &&
+        now.difference(_lastFetchTime!).inMinutes < _cacheTtlMinutes) {
+      
+      // Отдаём кэш — GitHub даже не узнает о запросе!
+      setState(() {
+        _releases = _cachedReleases[repoKey]!;
+        if (_releases.isNotEmpty) {
+          _selectedRelease = _releases[0];
+          _extractBinAssets();
+          _statusMessage = '${loc.translate('releases_available')}: ${_releases.length} (кэш ${_cacheTtlMinutes} мин)';
+        } else {
+          _statusMessage = loc.translate('releases_no_bins');
+        }
+      });
+      return; // Выходим — сеть не трогаем
+    }
+
+    // 🎯 КЭШ УСТАРЕЛ или отсутствует — идём в сеть
     setState(() {
       _isLoadingReleases = true;
       _releases = [];
@@ -130,7 +159,6 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
       'User-Agent': 'Xteink-Toolkit-App',
       'Accept': 'application/vnd.github.v3+json',
     };
-
     final String token = _tokenController.text.trim();
     if (token.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
@@ -138,14 +166,13 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
 
     try {
       final response = await _dio.get(
-        'https://api.github.com/repos/${_selectedRepo['repo']}/releases',
+        'https://api.github.com/repos/$repoKey/releases',
         options: Options(headers: headers),
       );
 
       if (response.statusCode == 200 && response.data is List) {
         List<dynamic> allReleases = response.data;
         List<dynamic> filteredReleases = [];
-
         for (var release in allReleases) {
           var assets = release['assets'] as List<dynamic>? ?? [];
           bool hasBin = assets.any(
@@ -155,6 +182,10 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
             filteredReleases.add(release);
           }
         }
+
+        // 🎯 СОХРАНЯЕМ В КЭШ
+        _cachedReleases[repoKey] = filteredReleases;
+        _lastFetchTime = DateTime.now();
 
         setState(() {
           _releases = filteredReleases;
@@ -212,7 +243,6 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
 
     try {
       final int sdkVersion = await _getAndroidSdkVersion();
-
       if (sdkVersion >= 30) {
         // === Android 11+ (API 30+): прямое сохранение через manageExternalStorage ===
         var status = await Permission.manageExternalStorage.status;
@@ -227,7 +257,8 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
           }
         }
 
-        final targetDir = Directory('/storage/emulated/0/Download/XteinkFirmware');
+        // 🎯 НОВЫЙ ПУТЬ: Download/X4Flow/Firmwares
+        final targetDir = Directory('/storage/emulated/0/Download/X4Flow/Firmwares');
         if (!await targetDir.exists()) {
           await targetDir.create(recursive: true);
         }
@@ -281,7 +312,6 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
         }
 
         final bytes = await tempFile.readAsBytes();
-
         final saveResult = await FilePicker.platform.saveFile(
           dialogTitle: '${loc.translate('releases_downloaded')} $fileName',
           fileName: fileName,
@@ -399,7 +429,7 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
                               : () async {
                                   await _saveToken();
                                   if (_tokenController.text.trim().isNotEmpty) {
-                                    _fetchReleases();
+                                    _fetchReleases(forceRefresh: true);
                                   }
                                 },
                           icon: const Icon(Icons.save_outlined, size: 18),
@@ -413,28 +443,44 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
             ),
           ),
 
-          // Repository selector
-          DropdownButtonFormField<Map<String, String>>(
-            value: _selectedRepo,
-            decoration: InputDecoration(
-              labelText: loc.translate('releases_select_repo'),
-              prefixIcon: const Icon(Icons.source_outlined),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            items: _repositories.map((repo) {
-              return DropdownMenuItem(value: repo, child: Text(repo['name']!));
-            }).toList(),
-            onChanged: _isDownloading || _isLoadingReleases
-                ? null
-                : (value) {
-                    if (value != null) {
-                      setState(() {
-                        _selectedRepo = value;
-                      });
-                      _fetchReleases();
-                    }
-                  },
+          // Repository selector + Refresh button
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<Map<String, String>>(
+                  value: _selectedRepo,
+                  decoration: InputDecoration(
+                    labelText: loc.translate('releases_select_repo'),
+                    prefixIcon: const Icon(Icons.source_outlined),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  items: _repositories.map((repo) {
+                    return DropdownMenuItem(value: repo, child: Text(repo['name']!));
+                  }).toList(),
+                  onChanged: _isDownloading || _isLoadingReleases
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            setState(() {
+                              _selectedRepo = value;
+                            });
+                            _fetchReleases(); // Обычная загрузка (с кэшем)
+                          }
+                        },
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 🎯 КНОПКА ПРИНУДИТЕЛЬНОГО ОБНОВЛЕНИЯ
+              IconButton.filledTonal(
+                onPressed: _isDownloading || _isLoadingReleases
+                    ? null
+                    : () => _fetchReleases(forceRefresh: true),
+                icon: const Icon(Icons.refresh, size: 20),
+                tooltip: 'Обновить (игнорировать кэш)',
+              ),
+            ],
           ),
+
           const SizedBox(height: 12),
 
           // Release selector
@@ -510,6 +556,7 @@ class _FirmwareScreenState extends State<FirmwareScreen> {
               ),
             ),
           ),
+
           const SizedBox(height: 8),
 
           // Bin assets list

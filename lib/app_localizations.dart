@@ -109,11 +109,13 @@ class AppLocalizations {
       'releases_network_error': 'Ошибка сети',
       'releases_download': 'Скачивание файла прошивки...',
       'releases_downloaded': 'Скачан',
-      'releases_saved': 'успешно сохранен в XteinkFirmware',
+      'releases_saved': 'успешно сохранен в Download/X4Flow/Firmwares',
       'releases_token_saved': 'Токен сохранён и применён',
       'releases_token_deleted': 'Токен удалён',
       'releases_save_token': 'Сохранить токен и обновить',
       'releases_clear_token': 'Очистить токен',
+      'releases_cache_info': 'кэш',
+      'releases_cache_minutes': 'мин',
       // Wi-Fi панель
       'wifi_preparation': 'Подготовка читалки Xteink:',
       'wifi_step1':
@@ -344,11 +346,13 @@ class AppLocalizations {
       'releases_network_error': 'Network error',
       'releases_download': 'Downloading firmware file...',
       'releases_downloaded': 'Downloaded',
-      'releases_saved': 'saved to XteinkFirmware',
+      'releases_saved': 'saved to Download/X4Flow/Firmwares',
       'releases_token_saved': 'Token saved and applied',
       'releases_token_deleted': 'Token deleted',
       'releases_save_token': 'Save token and refresh',
       'releases_clear_token': 'Clear token',
+      'releases_cache_info': 'cache',
+      'releases_cache_minutes': 'min',
       // Wi-Fi
       'wifi_preparation': 'Xteink reader preparation:',
       'wifi_step1':
