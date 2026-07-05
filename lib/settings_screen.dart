@@ -213,7 +213,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     children: [
                       Text(loc.translate('version'),
                           style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-                      const Text('1.1.1', style: TextStyle(fontWeight: FontWeight.w600)),
+                      const Text('1.1.2', style: TextStyle(fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ],

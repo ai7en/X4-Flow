@@ -14,21 +14,46 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.myapp"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "com.x4flow.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    // 🎯 Split APK по ABI + универсальный APK
+    splits {
+        abi {
+            isEnable = true
+            isUniversalApk = true  // Создаёт универсальный APK тоже
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86_64")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    //  Переименование APK
+    applicationVariants.all {
+        val variant = this
+        variant.outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val fileName = output.outputFileName
+            // Универсальный APK: app-universal-release.apk → X4 Flow-1.0.0.apk
+            // Split APK: app-arm64-v8a-release.apk → X4 Flow-1.0.0-arm64-v8a.apk
+            if (fileName.contains("universal") || !fileName.contains("-")) {
+                output.outputFileName = "X4 Flow-${variant.versionName}.apk"
+            } else {
+                val abiName = fileName
+                    .replace("app-", "")
+                    .replace("-release.apk", "")
+                    .replace("-debug.apk", "")
+                output.outputFileName = "X4 Flow-${variant.versionName}-$abiName.apk"
+            }
         }
     }
 }

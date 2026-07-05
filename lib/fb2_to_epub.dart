@@ -598,6 +598,50 @@ $navMap</navMap>
           .toList());
     }
 
+    // 🎯 ФИКС: у многих FB2-книг (например «Мастер и Маргарита») заголовок
+    // книги и эпиграф лежат ПРЯМО в <body>, а не внутри какой-либо
+    // <section> — `<body><title>...</title><epigraph>...</epigraph>
+    // <section>...главы...</section></body>`. Старый код обрабатывал
+    // только <section>, поэтому такой заголовок+эпиграф пропадал целиком
+    // (Calibre в этом случае создаёт для них отдельную страницу сразу
+    // после аннотации, перед первой главой).
+    final bodyTitleEl = mainBody.children
+        .whereType<XmlElement>()
+        .where((e) => e.name.local.toLowerCase() == 'title')
+        .toList();
+    final bodyEpigraphEls = mainBody.children
+        .whereType<XmlElement>()
+        .where((e) => e.name.local.toLowerCase() == 'epigraph')
+        .toList();
+    final bool hasBodyTitlePage = bodyTitleEl.isNotEmpty || bodyEpigraphEls.isNotEmpty;
+
+    String _buildBodyTitlePageHtml({
+      List<XmlElement>? notesSections,
+      Map<String, String>? sectionIdToFile,
+      Map<String, String>? noteBacklinks,
+      String? currentFileName,
+    }) {
+      final sb = StringBuffer();
+      if (bodyTitleEl.isNotEmpty) {
+        final paragraphs = bodyTitleEl.first.children
+            .whereType<XmlElement>()
+            .where((e) => e.name.local.toLowerCase() == 'p')
+            .toList();
+        if (paragraphs.length > 1) {
+          final parts = paragraphs
+              .map((p) => _processTextContainer(p, inline: true, notesSections: notesSections, sectionIdToFile: sectionIdToFile, noteBacklinks: noteBacklinks, currentFileName: currentFileName))
+              .join('<br class="calibre8"/>');
+          sb.write('<h1 class="calibre2">$parts</h1>');
+        } else {
+          sb.write('<h1 class="calibre2">${_processTextContainer(bodyTitleEl.first, inline: true, notesSections: notesSections, sectionIdToFile: sectionIdToFile, noteBacklinks: noteBacklinks, currentFileName: currentFileName)}</h1>');
+        }
+      }
+      for (final epi in bodyEpigraphEls) {
+        sb.write('<blockquote class="epigraph">${_processTextContainer(epi, notesSections: notesSections, sectionIdToFile: sectionIdToFile, noteBacklinks: noteBacklinks, currentFileName: currentFileName)}</blockquote>');
+      }
+      return sb.toString();
+    }
+
     // Карта section_id → имя файла (для резолва якорных ссылок, включая сноски)
     final Map<String, String> sectionIdToFile = {};
     final Map<int, String> sectionToFile = {};
@@ -605,6 +649,11 @@ $navMap</navMap>
 
     if (annotation.isNotEmpty) {
       sectionToFile[splitIndex] = 'annotation';
+      splitIndex++;
+    }
+
+    if (hasBodyTitlePage) {
+      sectionToFile[splitIndex] = 'body_title_page';
       splitIndex++;
     }
 
@@ -657,6 +706,21 @@ $navMap</navMap>
         'title': 'Annotation',
         'fileName': 'index_split_${splitIndex.toString().padLeft(3, '0')}.xhtml',
         'content': '<h1 id="calibre_toc_1" class="calibre2">Annotation</h1>$annotation<br class="calibre1"/>',
+      });
+      splitIndex++;
+    }
+
+    if (hasBodyTitlePage) {
+      final currentFileName = 'index_split_${splitIndex.toString().padLeft(3, '0')}.xhtml';
+      chapters.add({
+        'title': bookTitle,
+        'fileName': currentFileName,
+        'content': _buildBodyTitlePageHtml(
+          notesSections: notesSections,
+          sectionIdToFile: sectionIdToFile,
+          noteBacklinks: noteBacklinks,
+          currentFileName: currentFileName,
+        ),
       });
       splitIndex++;
     }
