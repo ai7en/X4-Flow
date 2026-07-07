@@ -10,33 +10,90 @@ import 'app_localizations.dart';
 import 'native_font_converter.dart';
 
 // 🎯 БАЗОВОЕ ПОКРЫТИЕ — включается ВСЕГДА, не показывается как чекбокс.
-const List<List<int>> kBaseCoverage = [
-  [0x0020, 0x007F],
-  [0x00A0, 0x00FF],
-  [0x2010, 0x2027],
+// --- Базовые наборы ---
+  const officialReadingFictionProfile = [
+    [0x0020, 0x007F], // Basic Latin (английский алфавит, цифры, базовые знаки, клавиатурный плюс/дефис)
+    [0x00A0, 0x00FF], // Latin-1 Supplement (знак градуса °, кавычки-ёлочки « », параграф §, диакритика для иностранных слов)
+    
+    // --- Наша спец-добавка для правильного отображения текстов ---
+    [0x0300, 0x036F], // Combining Diacritical Marks (комбинируемые знаки ударения, чтобы буквы не превращались в квадраты)
+    
+    // --- Кириллица ---
+    [0x0400, 0x04FF], // Cyrillic (основной русский алфавит, буква Ё, украинские/белорусские буквы)
+    [0x0500, 0x052F], // Cyrillic Supplement (дополнительные буквы для языков малых народов и редких славянских текстов)
+    
+    // --- Типографика, спецсимволы и валюты ---
+    [0x2000, 0x206F], // General Punctuation (полный блок: кавычки-лапки „ “, все виды тире —, многоточие …, спецпробелы)
+    [0x20A0, 0x20CF], // Currency Symbols (символы валют, включая знак рубля ₽ [0x20BD], доллар, евро и т.д.)
+    [0x2100, 0x214F], // Letterlike Symbols (буквоподобные знаки, включая жизненно важный для книг знак номера № [0x2116])
+    
+    // --- Точечный хак для математики ---
+    [0x2212, 0x2212], // Mathematical Minus (настоящий длинный минус для отрицательных чисел вроде −5)
 ];
 
-// Дополнительные пресеты — используем ключи переводов для label
+// Дополнительные пресеты — используем ключи переводов для label.
+// Список подогнан под "Additional Unicode Coverage" на
+// crosspointreader.com/fonts. isHeavy=true — это скрипты с тысячами
+// глифов (Hangul/Chinese/Japanese целиком содержат блок CJK Unified
+// Ideographs, ~10-20 тысяч символов) — конвертация займёт заметно больше
+// времени и даст очень большой файл, поэтому такие пресеты в UI отдельно
+// подтверждаются перед включением.
 class UnicodePreset {
   final String key;
   final String labelKey; // 🎯 КЛЮЧ ПЕРЕВОДА вместо хардкод-строки
   final List<List<int>> ranges;
-  const UnicodePreset(this.key, this.labelKey, this.ranges);
+  final bool isHeavy;
+  const UnicodePreset(this.key, this.labelKey, this.ranges, {this.isHeavy = false});
 }
 
 const List<UnicodePreset> kUnicodePresets = [
-  UnicodePreset('font_range_cyrillic', 'font_preset_cyrillic', [
-    [0x0400, 0x04FF],
-  ]),
   UnicodePreset('font_range_latin_ext', 'font_preset_latin_ext', [
     [0x0100, 0x024F],
   ]),
   UnicodePreset('font_range_greek', 'font_preset_greek', [
     [0x0370, 0x03FF],
   ]),
+  UnicodePreset('font_range_vietnamese', 'font_preset_vietnamese', [
+    [0x1E00, 0x1EFF],
+  ]),
+  UnicodePreset('font_range_hebrew', 'font_preset_hebrew', [
+    [0x0590, 0x05FF],
+  ]),
+  UnicodePreset('font_range_armenian', 'font_preset_armenian', [
+    [0x0530, 0x058F],
+  ]),
+  UnicodePreset('font_range_georgian', 'font_preset_georgian', [
+    [0x10A0, 0x10FF],
+  ]),
+  UnicodePreset('font_range_ethiopic', 'font_preset_ethiopic', [
+    [0x1200, 0x137F],
+  ]),
+  UnicodePreset('font_range_cherokee', 'font_preset_cherokee', [
+    [0x13A0, 0x13FF],
+  ]),
+  UnicodePreset('font_range_tifinagh', 'font_preset_tifinagh', [
+    [0x2D30, 0x2D7F],
+  ]),
+  UnicodePreset('font_range_thai', 'font_preset_thai', [
+    [0x0E00, 0x0E7F],
+  ]),
+  UnicodePreset('font_range_hangul', 'font_preset_hangul', [
+    [0x1100, 0x11FF], // Hangul Jamo
+    [0x3130, 0x318F], // Hangul Compatibility Jamo
+    [0xAC00, 0xD7A3], // Hangul Syllables (~11 172 символа!)
+  ], isHeavy: true),
+  UnicodePreset('font_range_chinese', 'font_preset_chinese', [
+    [0x4E00, 0x9FFF], // CJK Unified Ideographs (~20 900 символов!)
+  ], isHeavy: true),
+  UnicodePreset('font_range_japanese', 'font_preset_japanese', [
+    [0x3040, 0x309F], // Hiragana
+    [0x30A0, 0x30FF], // Katakana
+    [0x4E00, 0x9FFF], // Kanji — тот же блок CJK, что и китайский (~20 900!)
+  ], isHeavy: true),
   UnicodePreset('font_range_symbols', 'font_preset_symbols', [
-    [0x2190, 0x21FF],
-    [0x2200, 0x22FF],
+    [0x2190, 0x21FF], // Arrows (различные стрелки: влево, вправо, двойные, пунктирные и фигурные)
+    [0x2200, 0x22FF], // Mathematical Operators (математические знаки: кванторы, интегралы, суммы, корни, логические операторы)
+    [0x2600, 0x26FF], // Miscellaneous Symbols (разнообразные значки: погода, астрономия, карточные масти, шахматы, музыкальные ноты)
   ]),
 ];
 
@@ -198,7 +255,7 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
 
   List<List<int>> _buildIntervals() {
     final List<List<int>> intervals = [];
-    for (final base in kBaseCoverage) {
+    for (final base in officialReadingFictionProfile) {
       addRangeIfNotCovered(intervals, base);
     }
     for (final preset in kUnicodePresets) {
@@ -459,8 +516,36 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
                 for (final preset in kUnicodePresets)
                   CheckboxListTile(
                     title: Text(loc.translate(preset.labelKey)),
+                    subtitle: preset.isHeavy
+                        ? Text(
+                            loc.translate('font_preset_heavy_warning'),
+                            style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                          )
+                        : null,
                     value: _ranges[preset.key],
-                    onChanged: (v) => setState(() => _ranges[preset.key] = v ?? false),
+                    onChanged: (v) async {
+                      if (v == true && preset.isHeavy) {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text(loc.translate('font_preset_heavy_dialog_title')),
+                            content: Text(loc.translate('font_preset_heavy_dialog_body')),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(false),
+                                child: Text(loc.translate('font_cancel')),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.of(ctx).pop(true),
+                                child: Text(loc.translate('font_confirm')),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed != true) return;
+                      }
+                      setState(() => _ranges[preset.key] = v ?? false);
+                    },
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
                   ),
