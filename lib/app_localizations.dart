@@ -163,7 +163,7 @@ class AppLocalizations {
       'font_bold': 'Bold',
       'font_italic': 'Italic',
       'font_bold_italic': 'Bold Italic',
-      'font_crosspoint_params': 'Параметры CrossPoint',
+      'font_crosspoint_params': 'Параметры шрифта',  // 🆕 переименовано
       'font_family_label': 'Font Family',
       'font_family_helper': 'Имя папки и префикс файлов',
       'font_sizes_label': 'Размеры:',
@@ -215,6 +215,12 @@ class AppLocalizations {
           'Этот скрипт содержит несколько тысяч символов (иероглифы/слоги). Конвертация может занять много времени, а итоговый файл шрифта будет значительно больше обычного. Продолжить?',
       'font_cancel': 'Отмена',
       'font_confirm': 'Продолжить',
+      // 🆕 Stem calibration & sections
+      'font_stem_calibration': 'Калибровка штриха',
+      'font_stem_calibration_subtitle':
+          'Подбирает размер рендеринга для чистых штрихов на E-Ink (рекомендуется для мелких кеглей)',
+      'font_sizes_section': 'Размеры шрифта',
+      'font_unicode_section': 'Диапазоны Unicode',
     },
     'en': {
       // General
@@ -328,7 +334,7 @@ class AppLocalizations {
       'font_bold': 'Bold',
       'font_italic': 'Italic',
       'font_bold_italic': 'Bold Italic',
-      'font_crosspoint_params': 'CrossPoint parameters',
+      'font_crosspoint_params': 'Font parameters',  // 🆕 renamed
       'font_family_label': 'Font Family',
       'font_family_helper': 'Folder name and file prefix',
       'font_sizes_label': 'Sizes:',
@@ -418,6 +424,13 @@ class AppLocalizations {
       'wifi_back': 'Back',
       'wifi_refresh': 'Refresh',
       'wifi_disconnect': 'Disconnect',
+
+      // 🆕 Stem calibration & sections
+      'font_stem_calibration': 'Stem calibration',
+      'font_stem_calibration_subtitle':
+          'Picks render size for crisp stems on E-Ink (recommended for small sizes)',
+      'font_sizes_section': 'Font sizes',
+      'font_unicode_section': 'Unicode ranges',
     },
   };
 

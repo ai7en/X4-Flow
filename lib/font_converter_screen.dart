@@ -14,19 +14,19 @@ import 'native_font_converter.dart';
   const officialReadingFictionProfile = [
     [0x0020, 0x007F], // Basic Latin (английский алфавит, цифры, базовые знаки, клавиатурный плюс/дефис)
     [0x00A0, 0x00FF], // Latin-1 Supplement (знак градуса °, кавычки-ёлочки « », параграф §, диакритика для иностранных слов)
-    
+
     // --- Наша спец-добавка для правильного отображения текстов ---
     [0x0300, 0x036F], // Combining Diacritical Marks (комбинируемые знаки ударения, чтобы буквы не превращались в квадраты)
-    
+
     // --- Кириллица ---
     [0x0400, 0x04FF], // Cyrillic (основной русский алфавит, буква Ё, украинские/белорусские буквы)
     [0x0500, 0x052F], // Cyrillic Supplement (дополнительные буквы для языков малых народов и редких славянских текстов)
-    
+
     // --- Типографика, спецсимволы и валюты ---
     [0x2000, 0x206F], // General Punctuation (полный блок: кавычки-лапки „ “, все виды тире —, многоточие …, спецпробелы)
     [0x20A0, 0x20CF], // Currency Symbols (символы валют, включая знак рубля ₽ [0x20BD], доллар, евро и т.д.)
     [0x2100, 0x214F], // Letterlike Symbols (буквоподобные знаки, включая жизненно важный для книг знак номера № [0x2116])
-    
+
     // --- Точечный хак для математики ---
     [0x2212, 0x2212], // Mathematical Minus (настоящий длинный минус для отрицательных чисел вроде −5)
 ];
@@ -161,14 +161,20 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
   File? _boldFile;
   File? _italicFile;
   File? _boldItalicFile;
+
+  // 🆕 Размеры 8–31 с шагом 1 (по умолчанию 12–18 включительно)
   final Map<int, bool> _sizes = {
-  8: false, 10: false, 12: true, 14: true, 16: true, 18: true,
-  20: false, 22: false, 24: false, 26: false, 28: false, 30: false,
-};
+    for (int i = 8; i <= 31; i++) i: (i >= 12 && i <= 18),
+  };
+
   final Map<String, bool> _ranges = {
     for (final preset in kUnicodePresets) preset.key: preset.key == 'font_range_cyrillic',
   };
   bool _is2Bit = true;
+  bool _stemCalibrate = false; // 🆕 Stem calibration toggle
+  bool _sizesExpanded = true;   // 🆕 Состояние спойлера размеров
+  bool _unicodeExpanded = false; // 🆕 Состояние спойлера Unicode
+
   String? _previewRegularFamily;
   String? _previewBoldFamily;
   String? _previewItalicFamily;
@@ -315,6 +321,7 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
         sizes: activeSizes,
         intervals: intervals,
         is2Bit: _is2Bit,
+        stemCalibrate: _stemCalibrate, // 🆕
       );
 
       var storageStatus = await Permission.storage.status;
@@ -491,72 +498,99 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text(loc.translate('font_sizes_label'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                Wrap(
-                  spacing: 8,
-                  children: _sizes.keys.map((size) {
-                    return FilterChip(
-                      label: Text('$size pt'),
-                      selected: _sizes[size]!,
-                      onSelected: (val) => setState(() => _sizes[size] = val),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 12),
-                Row(
+
+                // 🆕 Размеры под ExpansionTile (спойлер) — ровная широкая сетка
+                ExpansionTile(
+                  title: Text(loc.translate('font_sizes_section')),
+                  initiallyExpanded: _sizesExpanded,
+                  onExpansionChanged: (v) => setState(() => _sizesExpanded = v),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
                   children: [
-                    Text(loc.translate('font_unicode_label'), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 6),
-                    Tooltip(
-                      message: loc.translate('font_base_coverage_tooltip'),
-                      child: Icon(Icons.info_outline, size: 16, color: theme.colorScheme.outline),
+                    GridView.count(
+                      crossAxisCount: 4,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      childAspectRatio: 1.6,
+                      children: _sizes.keys.map((size) {
+                        final selected = _sizes[size]!;
+                        return _SizeChip(
+                          size: size,
+                          selected: selected,
+                          onTap: () => setState(() => _sizes[size] = !selected),
+                        );
+                      }).toList(),
                     ),
                   ],
                 ),
-                for (final preset in kUnicodePresets)
-                  CheckboxListTile(
-                    title: Text(loc.translate(preset.labelKey)),
-                    subtitle: preset.isHeavy
-                        ? Text(
-                            loc.translate('font_preset_heavy_warning'),
-                            style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
-                          )
-                        : null,
-                    value: _ranges[preset.key],
-                    onChanged: (v) async {
-                      if (v == true && preset.isHeavy) {
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: Text(loc.translate('font_preset_heavy_dialog_title')),
-                            content: Text(loc.translate('font_preset_heavy_dialog_body')),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(ctx).pop(false),
-                                child: Text(loc.translate('font_cancel')),
-                              ),
-                              FilledButton(
-                                onPressed: () => Navigator.of(ctx).pop(true),
-                                child: Text(loc.translate('font_confirm')),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirmed != true) return;
-                      }
-                      setState(() => _ranges[preset.key] = v ?? false);
-                    },
-                    controlAffinity: ListTileControlAffinity.leading,
-                    dense: true,
+
+                const Divider(),
+
+                // 🆕 Unicode ranges под ExpansionTile (спойлер)
+                ExpansionTile(
+                  title: Row(
+                    children: [
+                      Text(loc.translate('font_unicode_section')),
+                      const SizedBox(width: 6),
+                      Tooltip(
+                        message: loc.translate('font_base_coverage_tooltip'),
+                        child: Icon(Icons.info_outline, size: 16, color: theme.colorScheme.outline),
+                      ),
+                    ],
                   ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _customRangesController,
-                  decoration: InputDecoration(
-                    labelText: loc.translate('font_custom_ranges_label'),
-                    border: const OutlineInputBorder(),
-                    helperText: loc.translate('font_custom_ranges_helper'),
-                  ),
+                  initiallyExpanded: _unicodeExpanded,
+                  onExpansionChanged: (v) => setState(() => _unicodeExpanded = v),
+                  childrenPadding: const EdgeInsets.only(bottom: 8),
+                  children: [
+                    for (final preset in kUnicodePresets)
+                      CheckboxListTile(
+                        title: Text(loc.translate(preset.labelKey)),
+                        subtitle: preset.isHeavy
+                            ? Text(
+                                loc.translate('font_preset_heavy_warning'),
+                                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                              )
+                            : null,
+                        value: _ranges[preset.key],
+                        onChanged: (v) async {
+                          if (v == true && preset.isHeavy) {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: Text(loc.translate('font_preset_heavy_dialog_title')),
+                                content: Text(loc.translate('font_preset_heavy_dialog_body')),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(ctx).pop(false),
+                                    child: Text(loc.translate('font_cancel')),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.of(ctx).pop(true),
+                                    child: Text(loc.translate('font_confirm')),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true) return;
+                          }
+                          setState(() => _ranges[preset.key] = v ?? false);
+                        },
+                        controlAffinity: ListTileControlAffinity.leading,
+                        dense: true,
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      child: TextField(
+                        controller: _customRangesController,
+                        decoration: InputDecoration(
+                          labelText: loc.translate('font_custom_ranges_label'),
+                          border: const OutlineInputBorder(),
+                          helperText: loc.translate('font_custom_ranges_helper'),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -575,6 +609,13 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
                   title: Text(loc.translate('font_2bit_title')),
                   value: _is2Bit,
                   onChanged: (v) => setState(() => _is2Bit = v),
+                ),
+                // 🆕 Stem calibration toggle
+                SwitchListTile(
+                  title: Text(loc.translate('font_stem_calibration')),
+                  subtitle: Text(loc.translate('font_stem_calibration_subtitle')),
+                  value: _stemCalibrate,
+                  onChanged: (v) => setState(() => _stemCalibrate = v),
                 ),
               ],
             ),
@@ -597,6 +638,56 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
             label: Text(loc.translate('font_compile_button')),
           ),
       ],
+    );
+  }
+}
+
+/// 🆕 Кастомная кнопка размера — широкая, с выровненным текстом
+class _SizeChip extends StatelessWidget {
+  final int size;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SizeChip({
+    required this.size,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected
+          ? theme.colorScheme.primaryContainer
+          : theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected
+                  ? Colors.transparent
+                  : theme.colorScheme.outline.withOpacity(0.35),
+              width: 1.2,
+            ),
+          ),
+          child: Text(
+            '$size',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected
+                  ? theme.colorScheme.onPrimaryContainer
+                  : theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

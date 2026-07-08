@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 import 'gpos_kerning_parser.dart';
@@ -123,6 +124,160 @@ class NativeFontConverter {
   static const int intervalSize = 12;
   static const int glyphSize = 16;
 
+  // ── Stem Calibration ─────────────────────────────────────────────
+  /// Распаковывает 2-bit или 1-bit bitmap в grayscale 0..255.
+  List<int> _unpackGrayBitmap(Uint8List packed, int width, int height, bool is2Bit) {
+    final result = List<int>.filled(width * height, 0);
+    int bitPos = 0;
+    int bytePos = 0;
+    final int totalPixels = width * height;
+    for (int i = 0; i < totalPixels; i++) {
+      if (is2Bit) {
+        final shift = 6 - (bitPos % 8);
+        final val = (packed[bytePos] >> shift) & 0x03;
+        result[i] = (val * 85).clamp(0, 255);
+        bitPos += 2;
+        if (bitPos % 8 == 0) bytePos++;
+        if (bytePos >= packed.length && i < totalPixels - 1) break;
+      } else {
+        final shift = 7 - (bitPos % 8);
+        final val = (packed[bytePos] >> shift) & 0x01;
+        result[i] = val == 1 ? 255 : 0;
+        bitPos += 1;
+        if (bitPos % 8 == 0) bytePos++;
+        if (bytePos >= packed.length && i < totalPixels - 1) break;
+      }
+    }
+    return result;
+  }
+
+  /// Измеряет "грязь" (gray fringe) на вертикальных краях stem глифа.
+  /// Чем меньше значение — тем чище штрих.
+  double _measureStemQuality(ConvertedGlyph glyph, bool is2Bit) {
+    final gray = _unpackGrayBitmap(glyph.bitmap, glyph.width, glyph.height, is2Bit);
+    final w = glyph.width;
+    final h = glyph.height;
+
+    // Bounding box с ink
+    int minX = w, maxX = -1, minY = h, maxY = -1;
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        if (gray[y * w + x] > 20) {
+          minX = math.min(minX, x);
+          maxX = math.max(maxX, x);
+          minY = math.min(minY, y);
+          maxY = math.max(maxY, y);
+        }
+      }
+    }
+    if (maxX < 0) return double.infinity;
+
+    // Плотность ink по столбцам внутри bounding box
+    final colCount = maxX - minX + 1;
+    final List<double> colDensities = List.filled(colCount, 0.0);
+    for (int x = 0; x < colCount; x++) {
+      double sum = 0;
+      for (int y = minY; y <= maxY; y++) {
+        sum += gray[y * w + (minX + x)] / 255.0;
+      }
+      colDensities[x] = sum / (maxY - minY + 1);
+    }
+
+    // Находим первый непрерывный stem: столбцы с density > 0.35
+    int stemStart = -1, stemEnd = -1;
+    for (int i = 0; i < colCount; i++) {
+      if (colDensities[i] > 0.35) {
+        if (stemStart == -1) stemStart = i;
+        stemEnd = i;
+      } else if (stemStart != -1) {
+        break; // берём только первый stem (обычно левый вертикальный)
+      }
+    }
+    if (stemStart == -1) return double.infinity;
+
+    final stemWidth = (stemEnd - stemStart + 1).toDouble();
+    final stemWidthFrac = (stemWidth - stemWidth.roundToDouble()).abs();
+
+    // Считаем "fringe" внутри stem — пиксели с промежуточной яркостью
+    double fringe = 0;
+    for (int i = stemStart; i <= stemEnd; i++) {
+      for (int y = minY; y <= maxY; y++) {
+        final v = gray[y * w + (minX + i)] / 255.0;
+        if (v > 0.05 && v < 0.95) fringe += 1.0;
+      }
+    }
+
+    // "Грязь" на границах stem (слева и справа)
+    double edgeDirt = 0;
+    if (stemStart > 0) {
+      for (int y = minY; y <= maxY; y++) {
+        final v = gray[y * w + (minX + stemStart - 1)] / 255.0;
+        if (v > 0.05 && v < 0.95) edgeDirt += 1.5;
+      }
+    }
+    if (stemEnd < colCount - 1) {
+      for (int y = minY; y <= maxY; y++) {
+        final v = gray[y * w + (minX + stemEnd + 1)] / 255.0;
+        if (v > 0.05 && v < 0.95) edgeDirt += 1.5;
+      }
+    }
+
+    // Штраф за нецелую ширину stem + базовый fringe
+    return fringe + edgeDirt + stemWidthFrac * 10.0;
+  }
+
+  /// Подбирает лучший renderSize (ppem) для nominalPt в диапазоне ±3 pt,
+  /// минимизируя gray fringe на тестовых глифах n, o, H.
+  Future<double> _findCalibratedRenderSize({
+    required String fontFamilyName,
+    required int nominalPt,
+    required bool is2Bit,
+  }) async {
+    final nominalRender = nominalPt * 2.1;
+    double bestSize = nominalRender;
+    double bestScore = double.infinity;
+
+    // Перебираем с шагом 0.5 в диапазоне ±3 от nominal
+    for (double testSize = nominalRender - 3.0;
+        testSize <= nominalRender + 3.0;
+        testSize += 0.5) {
+      if (testSize < 6) continue;
+
+      double totalScore = 0;
+      int samples = 0;
+
+      // Тестовые глифы: n, o, H (покрывают вертикальный stem и овал)
+      for (final cp in [0x006E, 0x006F, 0x0048]) {
+        final glyph = await _rasterizeGlyph(
+          cp: cp,
+          fontFamily: fontFamilyName,
+          renderSize: testSize,
+          is2Bit: is2Bit,
+          forceBold: false,
+          forceItalic: false,
+        );
+        if (glyph.width == 0 || glyph.height == 0) continue;
+        totalScore += _measureStemQuality(glyph, is2Bit);
+        samples++;
+      }
+
+      if (samples == 0) continue;
+      final avgScore = totalScore / samples;
+
+      // Небольшой штраф за отклонение от nominal, чтобы не уходить далеко
+      final sizeDeviation = (testSize - nominalRender).abs() * 0.3;
+      final finalScore = avgScore + sizeDeviation;
+
+      if (finalScore < bestScore) {
+        bestScore = finalScore;
+        bestSize = testSize;
+      }
+    }
+
+    return bestSize;
+  }
+  // ────────────────────────────────────────────────────────────────
+
   Future<Map<int, Uint8List>> convert({
     required Uint8List regularFont,
     Uint8List? boldFont,
@@ -132,6 +287,7 @@ class NativeFontConverter {
     required List<int> sizes,
     required List<List<int>> intervals,
     bool is2Bit = true,
+    bool stemCalibrate = false, // 🆕
     void Function(int current, int total)? onProgress,
   }) async {
     await _registerFont(regularFont, fontFamily);
@@ -146,6 +302,19 @@ class NativeFontConverter {
     final activeSizes = sizes.isNotEmpty ? sizes : [12, 14, 16, 18];
     final Map<int, Uint8List> results = {};
 
+    // 🆕 Stem calibration: находим лучший renderSize для каждого nominalPt
+    // (по Regular стилю, затем применяем ко всем стилям — как в Python-пайплайне)
+    final Map<int, double> calibratedSizes = {};
+    if (stemCalibrate) {
+      for (final fontSizePt in activeSizes) {
+        calibratedSizes[fontSizePt] = await _findCalibratedRenderSize(
+          fontFamilyName: fontFamily,
+          nominalPt: fontSizePt,
+          is2Bit: is2Bit,
+        );
+      }
+    }
+
     int totalCodePoints = 0;
     for (final interval in intervals) {
       totalCodePoints += (interval[1] - interval[0] + 1);
@@ -158,7 +327,9 @@ class NativeFontConverter {
     }
 
     for (final fontSizePt in activeSizes) {
-      final double renderSize = fontSizePt * 2.1;
+      final double renderSize = stemCalibrate
+          ? calibratedSizes[fontSizePt]!
+          : fontSizePt * 2.1;
 
       final regularResult = await _rasterizeStyle(
         fontFamilyName: fontFamily,
@@ -302,14 +473,14 @@ class NativeFontConverter {
     final List<ConvertedGlyph> ligatureGlyphs = [];
     final List<LigatureEntry> ligatures = [];
     final Set<int> acceptedLigatureCps = {};
-    
+
     for (final cand in kLigatureCandidates) {
       final leftIsBasicChar = cand.leftCp < 0xFB00;
       if (!leftIsBasicChar && !acceptedLigatureCps.contains(cand.leftCp)) {
         continue;
       }
       if (codePoints.contains(cand.resultCp)) continue;
-      
+
       final g = await _rasterizeGlyph(
         cp: cand.resultCp,
         fontFamily: fontFamilyName,
@@ -319,19 +490,19 @@ class NativeFontConverter {
         forceItalic: forceItalic,
       );
       if (g.width == 0 && g.height == 0) continue;
-      
+
       ligatureGlyphs.add(g);
       acceptedLigatureCps.add(cand.resultCp);
       ligatures.add(LigatureEntry((cand.leftCp << 16) | cand.rightCp, cand.resultCp));
     }
 
     final allGlyphs = [...glyphs, ...ligatureGlyphs];
-    
+
     final List<List<int>> finalIntervals = List.of(intervals);
     for (final ligCp in acceptedLigatureCps) {
       finalIntervals.add([ligCp, ligCp]);
     }
-    
+
     final sortedPairs = <MapEntry<List<int>, List<ConvertedGlyph>>>[];
     int glyphIdx = 0;
     for (final interval in finalIntervals) {
@@ -340,9 +511,9 @@ class NativeFontConverter {
       sortedPairs.add(MapEntry(interval, intervalGlyphs));
       glyphIdx += count;
     }
-    
+
     sortedPairs.sort((a, b) => a.key[0].compareTo(b.key[0]));
-    
+
     final sortedIntervals = sortedPairs.map((e) => e.key).toList();
     final sortedGlyphs = sortedPairs.expand((e) => e.value).toList();
 
@@ -369,39 +540,39 @@ class NativeFontConverter {
   }) {
     try {
       final raw = GposKerningParser.extractKerning(fontBytes);
-      
+
       if (raw.pairs.isEmpty) {
         return KerningResult.empty();
       }
 
       // Переводим font units в пиксели, затем в fixed-point 1/16 px
       final scale = renderSize / raw.unitsPerEm;
-      
+
       // Собираем только нужные пары из kKerningPairCandidates
       final Set<int> leftCps = {};
       final Set<int> rightCps = {};
       final List<List<int>> measuredDeltas = []; // [leftCp, rightCp, delta16]
-      
+
       for (final pair in kKerningPairCandidates) {
         final leftCp = pair[0];
         final rightCp = pair[1];
-        
+
         final rightMap = raw.pairs[leftCp];
         if (rightMap == null) continue;
-        
+
         final kerningFontUnits = rightMap[rightCp];
         if (kerningFontUnits == null || kerningFontUnits == 0) continue;
-        
+
         final kerningPx = kerningFontUnits * scale;
         final delta16 = (kerningPx * 16).round().clamp(-128, 127);
-        
+
         if (delta16 != 0) {
           leftCps.add(leftCp);
           rightCps.add(rightCp);
           measuredDeltas.add([leftCp, rightCp, delta16]);
         }
       }
-      
+
       if (measuredDeltas.isEmpty) {
         return KerningResult.empty();
       }
@@ -409,21 +580,21 @@ class NativeFontConverter {
       // Формируем классы (1 codepoint = 1 class)
       final Map<int, int> leftClassOf = {};
       final Map<int, int> rightClassOf = {};
-      
+
       int leftClassId = 1;
       for (final cp in leftCps.toList()..sort()) {
         leftClassOf[cp] = leftClassId++;
       }
-      
+
       int rightClassId = 1;
       for (final cp in rightCps.toList()..sort()) {
         rightClassOf[cp] = rightClassId++;
       }
-      
+
       final int leftCount = leftClassOf.length;
       final int rightCount = rightClassOf.length;
       final List<int> matrix = List<int>.filled(leftCount * rightCount, 0);
-      
+
       for (final d in measuredDeltas) {
         final lc = leftClassOf[d[0]]!;
         final rc = rightClassOf[d[1]]!;
