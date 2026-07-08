@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
+import 'gpos_kerning_parser.dart';
 
 class ConvertedGlyph {
   final int codePoint;
@@ -36,11 +37,6 @@ class FontMetrics {
 
 enum FontStyle { regular, bold, italic, boldItalic }
 
-/// Один "кандидат" на стандартную латинскую лигатуру: пара кодовых точек →
-/// результирующая кодовая точка лигатуры (стандартный блок Unicode
-/// "Alphabetic Presentation Forms", U+FB00-FB06). Порядок важен: ffi/ffl
-/// зависят от того, что "ff" (U+FB00) уже принята для этого стиля — так
-/// повторяется greedy-алгоритм устройства (сначала f+f→ff, потом ff+i→ffi).
 class LigatureCandidate {
   final int leftCp;
   final int rightCp;
@@ -56,19 +52,6 @@ const List<LigatureCandidate> kLigatureCandidates = [
   LigatureCandidate(0xFB00, 0x006C, 0xFB04), // ff + l = ffl
   LigatureCandidate(0x0073, 0x0074, 0xFB06), // s + t = st
 ];
-
-class LigatureEntry {
-  final int pair; // (leftCp << 16) | rightCp
-  final int ligatureCp;
-  LigatureEntry(this.pair, this.ligatureCp);
-}
-
-/// Список "проблемных" пар букв, для которых обычно нужен кернинг —
-/// расширяемый набор типичных случаев (латиница + кириллица). Ничего не
-/// парсим из таблиц шрифта — просто рендерим пару и одиночные буквы через
-/// dart:ui (Skia сам применяет реальный кернинг шрифта при layout, если он
-/// в нём есть) и берём РАЗНИЦУ между шириной пары и суммой одиночных ширин
-/// как готовую кернинг-коррекцию.
 const List<List<int>> kKerningPairCandidates = [
   // Латиница
   [0x41, 0x56], [0x56, 0x41], // AV VA
@@ -85,15 +68,18 @@ const List<List<int>> kKerningPairCandidates = [
   [0x42C, 0x41E], // ЬО
 ];
 
+class LigatureEntry {
+  final int pair; // (leftCp << 16) | rightCp
+  final int ligatureCp;
+  LigatureEntry(this.pair, this.ligatureCp);
+}
+
 class KerningClassEntry {
   final int codepoint;
-  final int classId; // 1-based, 0 зарезервирован как "нет класса"
+  final int classId; // 1-based, 0 = no class
   KerningClassEntry(this.codepoint, this.classId);
 }
 
-/// Итог измерения кернинга для одного стиля: отсортированные по codepoint
-/// таблицы левых/правых классов + плоская матрица поправок (int8,
-/// leftClassCount × rightClassCount, matrix[(lc-1)*rightCount+(rc-1)]).
 class KerningResult {
   final List<KerningClassEntry> leftClasses;
   final List<KerningClassEntry> rightClasses;
@@ -117,10 +103,6 @@ class KerningResult {
       );
 }
 
-/// Результат растеризации одного стиля: глифы + итоговые интервалы
-/// (пользовательские + отдельные интервалы под принятые лигатуры, если
-/// у этого конкретного шрифта/начертания нашлись соответствующие глифы)
-/// + сама таблица лигатурных пар для TOC этого стиля.
 class StyleRasterResult {
   final List<ConvertedGlyph> glyphs;
   final List<List<int>> intervals;
@@ -153,10 +135,10 @@ class NativeFontConverter {
     void Function(int current, int total)? onProgress,
   }) async {
     await _registerFont(regularFont, fontFamily);
-    if (boldFont != null) await _registerFont(boldFont, '$fontFamily Bold');
-    if (italicFont != null) await _registerFont(italicFont, '$fontFamily Italic');
+    if (boldFont != null) await _registerFont(boldFont, fontFamily + ' Bold');
+    if (italicFont != null) await _registerFont(italicFont, fontFamily + ' Italic');
     if (boldItalicFont != null) {
-      await _registerFont(boldItalicFont, '$fontFamily Bold Italic');
+      await _registerFont(boldItalicFont, fontFamily + ' Bold Italic');
     }
 
     await Future.delayed(const Duration(milliseconds: 500));
@@ -164,9 +146,6 @@ class NativeFontConverter {
     final activeSizes = sizes.isNotEmpty ? sizes : [12, 14, 16, 18];
     final Map<int, Uint8List> results = {};
 
-    // Грубая оценка общего объёма работы для прогресс-бара: размеры × 4
-    // начертания × число кодовых точек (лигатуры — единицы штук, ими можно
-    // пренебречь в оценке). Реальный счётчик обновляется по ходу растеризации.
     int totalCodePoints = 0;
     for (final interval in intervals) {
       totalCodePoints += (interval[1] - interval[0] + 1);
@@ -179,12 +158,6 @@ class NativeFontConverter {
     }
 
     for (final fontSizePt in activeSizes) {
-      // 🎯 ФИКС: сравнение с эталонным .cpfont от crosspointreader.com/fonts
-      // показало, что при одинаковом номинальном размере (20) наш ascender
-      // получался РОВНО в 2 раза меньше эталонного (21 против 42) — то есть
-      // прежний коэффициент 1.05 давал вдвое меньший физический размер
-      // глифов, чем ожидает устройство. 2.1 = 1.05 × 2, подобрано по точному
-      // отношению эталонных метрик (42/20 = 2.1).
       final double renderSize = fontSizePt * 2.1;
 
       final regularResult = await _rasterizeStyle(
@@ -194,38 +167,42 @@ class NativeFontConverter {
         is2Bit: is2Bit,
         forceBold: false,
         forceItalic: false,
+        fontBytes: regularFont,
         onGlyphDone: bumpProgress,
       );
 
       final boldResult = await _rasterizeStyle(
-        fontFamilyName: boldFont != null ? '$fontFamily Bold' : fontFamily,
+        fontFamilyName: boldFont != null ? fontFamily + ' Bold' : fontFamily,
         renderSize: renderSize,
         intervals: intervals,
         is2Bit: is2Bit,
         forceBold: boldFont == null,
         forceItalic: false,
+        fontBytes: boldFont ?? regularFont,
         onGlyphDone: bumpProgress,
       );
 
       final italicResult = await _rasterizeStyle(
-        fontFamilyName: italicFont != null ? '$fontFamily Italic' : fontFamily,
+        fontFamilyName: italicFont != null ? fontFamily + ' Italic' : fontFamily,
         renderSize: renderSize,
         intervals: intervals,
         is2Bit: is2Bit,
         forceBold: false,
         forceItalic: italicFont == null,
+        fontBytes: italicFont ?? regularFont,
         onGlyphDone: bumpProgress,
       );
 
       final boldItalicResult = await _rasterizeStyle(
         fontFamilyName: boldItalicFont != null
-            ? '$fontFamily Bold Italic'
-            : (boldFont != null ? '$fontFamily Bold' : fontFamily),
+            ? fontFamily + ' Bold Italic'
+            : (boldFont != null ? fontFamily + ' Bold' : fontFamily),
         renderSize: renderSize,
         intervals: intervals,
         is2Bit: is2Bit,
         forceBold: boldItalicFont == null,
         forceItalic: boldItalicFont == null,
+        fontBytes: boldItalicFont ?? boldFont ?? regularFont,
         onGlyphDone: bumpProgress,
       );
 
@@ -291,200 +268,187 @@ class NativeFontConverter {
   }
 
   Future<StyleRasterResult> _rasterizeStyle({
-  required String fontFamilyName,
-  required double renderSize,
-  required List<List<int>> intervals,
-  required bool is2Bit,
-  required bool forceBold,
-  required bool forceItalic,
-  void Function()? onGlyphDone,
-}) async {
-  final List<int> codePoints = [];
-  for (final interval in intervals) {
-    for (int cp = interval[0]; cp <= interval[1]; cp++) {
-      codePoints.add(cp);
-    }
-  }
-
-  final List<ConvertedGlyph> glyphs = [];
-  for (final cp in codePoints) {
-    final glyph = await _rasterizeGlyph(
-      cp: cp,
-      fontFamily: fontFamilyName,
-      renderSize: renderSize,
-      is2Bit: is2Bit,
-      forceBold: forceBold,
-      forceItalic: forceItalic,
-    );
-    glyphs.add(glyph);
-    onGlyphDone?.call();
-  }
-
-  // 🎯 ЛИГАТУРЫ
-  final List<ConvertedGlyph> ligatureGlyphs = [];
-  final List<LigatureEntry> ligatures = [];
-  final Set<int> acceptedLigatureCps = {};
-  
-  for (final cand in kLigatureCandidates) {
-    final leftIsBasicChar = cand.leftCp < 0xFB00;
-    if (!leftIsBasicChar && !acceptedLigatureCps.contains(cand.leftCp)) {
-      continue;
-    }
-    if (codePoints.contains(cand.resultCp)) continue;
-    
-    final g = await _rasterizeGlyph(
-      cp: cand.resultCp,
-      fontFamily: fontFamilyName,
-      renderSize: renderSize,
-      is2Bit: is2Bit,
-      forceBold: forceBold,
-      forceItalic: forceItalic,
-    );
-    if (g.width == 0 && g.height == 0) continue;
-    
-    ligatureGlyphs.add(g);
-    acceptedLigatureCps.add(cand.resultCp);
-    ligatures.add(LigatureEntry((cand.leftCp << 16) | cand.rightCp, cand.resultCp));
-  }
-
-  // 🎯 ОБЪЕДИНЯЕМ: основные глифы + лигатуры
-  final allGlyphs = [...glyphs, ...ligatureGlyphs];
-  
-  // 🎯 СОЗДАЁМ интервалы с учётом лигатур
-  final List<List<int>> finalIntervals = List.of(intervals);
-  for (final ligCp in acceptedLigatureCps) {
-    finalIntervals.add([ligCp, ligCp]);
-  }
-  
-  // 🎯 СОРТИРУЕМ интервалы И глифы синхронно
-  final sortedPairs = <MapEntry<List<int>, List<ConvertedGlyph>>>[];
-  int glyphIdx = 0;
-  for (final interval in finalIntervals) {
-    final count = interval[1] - interval[0] + 1;
-    final intervalGlyphs = allGlyphs.sublist(glyphIdx, glyphIdx + count);
-    sortedPairs.add(MapEntry(interval, intervalGlyphs));
-    glyphIdx += count;
-  }
-  
-  // Сортируем по startCodePoint
-  sortedPairs.sort((a, b) => a.key[0].compareTo(b.key[0]));
-  
-  // Восстанавливаем отсортированные интервалы и глифы
-  final sortedIntervals = sortedPairs.map((e) => e.key).toList();
-  final sortedGlyphs = sortedPairs.expand((e) => e.value).toList();
-
-  final kerning = _measureKerning(
-    fontFamilyName: fontFamilyName,
-    renderSize: renderSize,
-    forceBold: forceBold,
-    forceItalic: forceItalic,
-  );
-
-  return StyleRasterResult(
-    glyphs: sortedGlyphs,
-    intervals: sortedIntervals,
-    ligatures: ligatures,
-    kerning: kerning,
-  );
-}
-
-  /// 🎯 ПЕРЕПИСАНО:
-  ///  1) advanceX теперь пишется в 1/16 px fixed-point (как того требует
-  ///     формат — см. `adv/16` в тестовом скрипте cpfont_engine.py). Раньше
-  ///     писался как обычный px, из-за чего advance был в 16 раз меньше
-  ///     нужного и буквы должны были почти слипаться на устройстве.
-  ///  2) Растеризация теперь обрезается по фактическому bounding box чернил
-  ///     (tight crop), а не сохраняет пустой квадрат renderSize*3 целиком —
-  ///     это в разы уменьшает размер .cpfont и нагрузку на RAM ESP32-C3
-  ///     при парсинге на устройстве. left/top при этом стали настоящими
-  ///     смещениями bbox от пера/базовой линии, а не константами (0, baseline)
-  ///     на все глифы стиля.
-  ///  3) Канвас рисуется с запасом по краям (margin), чтобы засечки/наклон
-  ///     курсива, выходящие за пределы advance-width, не обрезались раньше
-  ///     времени — обрезка по чернилам всё равно уберёт лишнее поле.
-  /// Измеряет реальный кернинг шрифта для набора "проблемных" пар через
-  /// сравнение ширины пары (после layout, т.е. с учётом shaping/GPOS,
-  /// который Skia применяет сама) с суммой ширин одиночных букв. Разница —
-  /// это и есть готовая кернинг-коррекция в пикселях данного renderSize,
-  /// без необходимости парсить таблицы шрифта вручную.
-  KerningResult _measureKerning({
     required String fontFamilyName,
     required double renderSize,
+    required List<List<int>> intervals,
+    required bool is2Bit,
     required bool forceBold,
     required bool forceItalic,
-  }) {
-    double measureAdvance(String s) {
-      final textStyle = ui.TextStyle(
+    required Uint8List fontBytes,
+    void Function()? onGlyphDone,
+  }) async {
+    final List<int> codePoints = [];
+    for (final interval in intervals) {
+      for (int cp = interval[0]; cp <= interval[1]; cp++) {
+        codePoints.add(cp);
+      }
+    }
+
+    final List<ConvertedGlyph> glyphs = [];
+    for (final cp in codePoints) {
+      final glyph = await _rasterizeGlyph(
+        cp: cp,
         fontFamily: fontFamilyName,
-        fontSize: renderSize,
-        color: const ui.Color(0xFF000000),
-        fontWeight: forceBold ? ui.FontWeight.bold : ui.FontWeight.normal,
-        fontStyle: forceItalic ? ui.FontStyle.italic : ui.FontStyle.normal,
+        renderSize: renderSize,
+        is2Bit: is2Bit,
+        forceBold: forceBold,
+        forceItalic: forceItalic,
       );
-      final pb = ui.ParagraphBuilder(ui.ParagraphStyle(textDirection: ui.TextDirection.ltr))
-        ..pushStyle(textStyle)
-        ..addText(s);
-      final p = pb.build()..layout(const ui.ParagraphConstraints(width: double.infinity));
-      return p.longestLine;
+      glyphs.add(glyph);
+      onGlyphDone?.call();
     }
 
-    final Map<int, double> singleAdvanceCache = {};
-    double singleAdvance(int cp) {
-      return singleAdvanceCache.putIfAbsent(cp, () => measureAdvance(String.fromCharCode(cp)));
-    }
-
-    final Map<int, int> leftClassOf = {};
-    final Map<int, int> rightClassOf = {};
-    final List<List<int>> measuredDeltas = []; // [leftCp, rightCp, delta]
-
-    for (final pair in kKerningPairCandidates) {
-      final leftCp = pair[0];
-      final rightCp = pair[1];
-      final together = measureAdvance(
-        String.fromCharCode(leftCp) + String.fromCharCode(rightCp),
+    // Лигатуры
+    final List<ConvertedGlyph> ligatureGlyphs = [];
+    final List<LigatureEntry> ligatures = [];
+    final Set<int> acceptedLigatureCps = {};
+    
+    for (final cand in kLigatureCandidates) {
+      final leftIsBasicChar = cand.leftCp < 0xFB00;
+      if (!leftIsBasicChar && !acceptedLigatureCps.contains(cand.leftCp)) {
+        continue;
+      }
+      if (codePoints.contains(cand.resultCp)) continue;
+      
+      final g = await _rasterizeGlyph(
+        cp: cand.resultCp,
+        fontFamily: fontFamilyName,
+        renderSize: renderSize,
+        is2Bit: is2Bit,
+        forceBold: forceBold,
+        forceItalic: forceItalic,
       );
-      final apart = singleAdvance(leftCp) + singleAdvance(rightCp);
-      final delta = (together - apart).round();
-      if (delta == 0) continue; // нет заметной коррекции — не тратим место в таблице
-
-      if (!leftClassOf.containsKey(leftCp)) {
-        leftClassOf[leftCp] = leftClassOf.length + 1; // 1-based
-      }
-      if (!rightClassOf.containsKey(rightCp)) {
-        rightClassOf[rightCp] = rightClassOf.length + 1;
-      }
-      measuredDeltas.add([leftCp, rightCp, delta.clamp(-128, 127)]);
+      if (g.width == 0 && g.height == 0) continue;
+      
+      ligatureGlyphs.add(g);
+      acceptedLigatureCps.add(cand.resultCp);
+      ligatures.add(LigatureEntry((cand.leftCp << 16) | cand.rightCp, cand.resultCp));
     }
 
-    if (measuredDeltas.isEmpty) {
+    final allGlyphs = [...glyphs, ...ligatureGlyphs];
+    
+    final List<List<int>> finalIntervals = List.of(intervals);
+    for (final ligCp in acceptedLigatureCps) {
+      finalIntervals.add([ligCp, ligCp]);
+    }
+    
+    final sortedPairs = <MapEntry<List<int>, List<ConvertedGlyph>>>[];
+    int glyphIdx = 0;
+    for (final interval in finalIntervals) {
+      final count = interval[1] - interval[0] + 1;
+      final intervalGlyphs = allGlyphs.sublist(glyphIdx, glyphIdx + count);
+      sortedPairs.add(MapEntry(interval, intervalGlyphs));
+      glyphIdx += count;
+    }
+    
+    sortedPairs.sort((a, b) => a.key[0].compareTo(b.key[0]));
+    
+    final sortedIntervals = sortedPairs.map((e) => e.key).toList();
+    final sortedGlyphs = sortedPairs.expand((e) => e.value).toList();
+
+    // КЕРНИНГ: через GPOS парсер с фильтрацией
+    final kerning = _measureKerningFromGPOS(
+      fontBytes: fontBytes,
+      renderSize: renderSize,
+    );
+
+    return StyleRasterResult(
+      glyphs: sortedGlyphs,
+      intervals: sortedIntervals,
+      ligatures: ligatures,
+      kerning: kerning,
+    );
+  }
+
+  /// Измеряет кернинг через прямой парсинг GPOS таблицы шрифта.
+  /// Берёт ТОЛЬКО пары из kKerningPairCandidates, чтобы матрица
+  /// оставалась компактной (макс. ~13x14 = 182 байта).
+  KerningResult _measureKerningFromGPOS({
+    required Uint8List fontBytes,
+    required double renderSize,
+  }) {
+    try {
+      final raw = GposKerningParser.extractKerning(fontBytes);
+      
+      if (raw.pairs.isEmpty) {
+        return KerningResult.empty();
+      }
+
+      // Переводим font units в пиксели, затем в fixed-point 1/16 px
+      final scale = renderSize / raw.unitsPerEm;
+      
+      // Собираем только нужные пары из kKerningPairCandidates
+      final Set<int> leftCps = {};
+      final Set<int> rightCps = {};
+      final List<List<int>> measuredDeltas = []; // [leftCp, rightCp, delta16]
+      
+      for (final pair in kKerningPairCandidates) {
+        final leftCp = pair[0];
+        final rightCp = pair[1];
+        
+        final rightMap = raw.pairs[leftCp];
+        if (rightMap == null) continue;
+        
+        final kerningFontUnits = rightMap[rightCp];
+        if (kerningFontUnits == null || kerningFontUnits == 0) continue;
+        
+        final kerningPx = kerningFontUnits * scale;
+        final delta16 = (kerningPx * 16).round().clamp(-128, 127);
+        
+        if (delta16 != 0) {
+          leftCps.add(leftCp);
+          rightCps.add(rightCp);
+          measuredDeltas.add([leftCp, rightCp, delta16]);
+        }
+      }
+      
+      if (measuredDeltas.isEmpty) {
+        return KerningResult.empty();
+      }
+
+      // Формируем классы (1 codepoint = 1 class)
+      final Map<int, int> leftClassOf = {};
+      final Map<int, int> rightClassOf = {};
+      
+      int leftClassId = 1;
+      for (final cp in leftCps.toList()..sort()) {
+        leftClassOf[cp] = leftClassId++;
+      }
+      
+      int rightClassId = 1;
+      for (final cp in rightCps.toList()..sort()) {
+        rightClassOf[cp] = rightClassId++;
+      }
+      
+      final int leftCount = leftClassOf.length;
+      final int rightCount = rightClassOf.length;
+      final List<int> matrix = List<int>.filled(leftCount * rightCount, 0);
+      
+      for (final d in measuredDeltas) {
+        final lc = leftClassOf[d[0]]!;
+        final rc = rightClassOf[d[1]]!;
+        matrix[(lc - 1) * rightCount + (rc - 1)] = d[2];
+      }
+
+      final leftClasses = leftClassOf.entries
+          .map((e) => KerningClassEntry(e.key, e.value))
+          .toList()
+        ..sort((a, b) => a.codepoint.compareTo(b.codepoint));
+      final rightClasses = rightClassOf.entries
+          .map((e) => KerningClassEntry(e.key, e.value))
+          .toList()
+        ..sort((a, b) => a.codepoint.compareTo(b.codepoint));
+
+      return KerningResult(
+        leftClasses: leftClasses,
+        rightClasses: rightClasses,
+        matrix: matrix,
+        leftClassCount: leftCount,
+        rightClassCount: rightCount,
+      );
+    } catch (e) {
       return KerningResult.empty();
     }
-
-    final int leftCount = leftClassOf.length;
-    final int rightCount = rightClassOf.length;
-    final List<int> matrix = List<int>.filled(leftCount * rightCount, 0);
-    for (final d in measuredDeltas) {
-      final lc = leftClassOf[d[0]]!;
-      final rc = rightClassOf[d[1]]!;
-      matrix[(lc - 1) * rightCount + (rc - 1)] = d[2];
-    }
-
-    final leftClasses = leftClassOf.entries
-        .map((e) => KerningClassEntry(e.key, e.value))
-        .toList()
-      ..sort((a, b) => a.codepoint.compareTo(b.codepoint));
-    final rightClasses = rightClassOf.entries
-        .map((e) => KerningClassEntry(e.key, e.value))
-        .toList()
-      ..sort((a, b) => a.codepoint.compareTo(b.codepoint));
-
-    return KerningResult(
-      leftClasses: leftClasses,
-      rightClasses: rightClasses,
-      matrix: matrix,
-      leftClassCount: leftCount,
-      rightClassCount: rightCount,
-    );
   }
 
   Future<ConvertedGlyph> _rasterizeGlyph({
@@ -521,7 +485,6 @@ class NativeFontConverter {
     final double baseline = paragraph.alphabeticBaseline;
     final int advance16 = (advanceMeasured * 16).round().clamp(0, 65535);
 
-    // Пробел и подобные — не рисуем вообще, просто продвижение пера.
     final bool isBlank = cp == 0x20 || cp == 0xA0 || charStr.trim().isEmpty;
     if (isBlank) {
       return ConvertedGlyph(
@@ -535,7 +498,6 @@ class NativeFontConverter {
       );
     }
 
-    // Запас по краям канваса под курсив/засечки, вылезающие за advance-width.
     final int margin = (renderSize * 0.5).ceil().clamp(4, 64);
     final int canvasW = (advanceMeasured.ceil() + margin * 2).clamp(1, 512);
     final int canvasH = (lineHeight.ceil() + margin * 2).clamp(1, 512);
@@ -569,7 +531,6 @@ class NativeFontConverter {
 
     final buffer = byteData.buffer.asUint8List();
 
-    // Полная серая карта канваса + поиск tight bounding box чернил.
     final gray = Uint8List(canvasW * canvasH);
     int minX = canvasW, minY = canvasH, maxX = -1, maxY = -1;
     for (int y = 0; y < canvasH; y++) {
@@ -591,8 +552,6 @@ class NativeFontConverter {
     }
 
     if (maxX < 0) {
-      // Чернил нет (в шрифте нет такого глифа, или он реально пуст) —
-      // не пробел, но и растра нет. Отдаём пустой глиф с advance.
       return ConvertedGlyph(
         codePoint: cp,
         width: 0,
@@ -617,15 +576,7 @@ class NativeFontConverter {
     cropped = _applyGapFix(cropped, glyphWidth, glyphHeight);
     final Uint8List packedBitmap = _packBitmap(cropped, is2Bit);
 
-    // left/top — смещения tight-bbox от пера (x=0) и от базовой линии,
-    // с поправкой на добавленный margin канваса.
     final int left = minX - margin;
-    // 🎯 ФИКС: сравнение с эталонным .cpfont показало, что знак top
-    // инвертирован. Формат хранит top как расстояние от базовой линии
-    // ВВЕРХ до верхнего края чернил, со знаком "+" (например у эталонной
-    // буквы 'A' top=+29). Раньше здесь вычиталось наоборот (minY-baseline),
-    // что для обычных букв всегда даёт отрицательное число — ровно
-    // противоположный знак тому, что ждёт устройство.
     final int top = (baseline - (minY - margin)).round().clamp(-32768, 32767);
 
     return ConvertedGlyph(
@@ -655,15 +606,6 @@ class NativeFontConverter {
     return result;
   }
 
-  /// 🎯 ИСПРАВЛЕНО ПОВТОРНО: подтверждённая таблица из исходников прошивки
-  /// (GfxRenderer.cpp) показывает, что устройство САМО инвертирует сырой
-  /// байт при рендере (render = 3 - raw): raw=0x00 → рендер-значение 3
-  /// → "пропустить (фон)"; raw=0x11(=3) → рендер-значение 0 → "нарисовать
-  /// чёрным". То есть в ФАЙЛЕ нужно хранить ПРЯМУЮ шкалу (0=фон, 3=чернила),
-  /// а не инвертированную. Прошлый фикс инвертировал её ЗАРАНЕЕ, из-за чего
-  /// прошивка применяла свою инверсию поверх уже инвертированных данных —
-  /// в сумме двойная инверсия давала "чёрный прямоугольник с белой буквой
-  /// внутри" (фон рисовался чёрным, чернила становились прозрачными).
   Uint8List _packBitmap(List<int> gray, bool is2Bit) {
     final List<int> packed = [];
     int currentByte = 0;
@@ -671,8 +613,6 @@ class NativeFontConverter {
 
     for (int alpha in gray) {
       if (is2Bit) {
-        // alpha: 0 = фон/белый, 255 = максимально тёмные чернила.
-        // val:   0 = фон,       3 = максимально тёмные чернила (прямая шкала).
         int val = (alpha ~/ 64).clamp(0, 3);
         currentByte = (currentByte << 2) | val;
         bitsCount += 2;
@@ -712,12 +652,10 @@ class NativeFontConverter {
       for (final g in result.glyphs) {
         bitmapsSize += g.bitmap.length;
       }
-      // Порядок блока данных стиля: intervals → glyph table → kernLeft →
-      // kernRight → kernMatrix → ligatures(8 байт/запись) → bitmaps.
       final ligBytes = result.ligatures.length * 8;
       final kernLeftBytes = result.kerning.leftClasses.length * 3;
       final kernRightBytes = result.kerning.rightClasses.length * 3;
-      final kernMatrixBytes = result.kerning.matrix.length; // 1 байт (int8) на ячейку
+      final kernMatrixBytes = result.kerning.matrix.length;
       final dataSize = (result.intervals.length * intervalSize) +
           (result.glyphs.length * glyphSize) +
           kernLeftBytes +
@@ -738,25 +676,19 @@ class NativeFontConverter {
     final ByteData view = ByteData.sublistView(buffer);
     int offset = 0;
 
-    // === 1. HEADER (32 байта) ===
+    // HEADER
     for (int i = 0; i < magic.length; i++) {
       buffer[offset++] = magic.codeUnitAt(i);
     }
-    // version = 4 (uint16) — байты 8-9
     view.setUint16(offset, 4, Endian.little);
     offset += 2;
-    // flags — байты 10-11. Судя по всему бит 0 кодирует режим 2-bit/1-bit
-    // (по аналогии с полем is2Bit в родственном формате EPDFont того же
-    // семейства инструментов) — раньше здесь был жёстко прибитый 1
-    // независимо от реального is2Bit, теперь привязано к параметру.
     view.setUint16(offset, is2Bit ? 1 : 0, Endian.little);
     offset += 2;
-    // styleCount = 4 (uint8) — байт 12, затем 19 зарезервированных байт (13-31)
     view.setUint8(offset, numStyles);
     offset += 1;
     offset += 19;
 
-    // === 2. STYLE TOC (4 × 32 байта) ===
+    // STYLE TOC
     int currentDataOffset = headerSize + (numStyles * styleTocSize);
     final Map<FontStyle, int> styleOffsets = {};
     for (final style in FontStyle.values) {
@@ -780,22 +712,22 @@ class NativeFontConverter {
       offset += 2;
       view.setInt16(offset, metrics.descender.clamp(-32768, 32767), Endian.little);
       offset += 2;
-      view.setUint16(offset, result.kerning.leftClasses.length.clamp(0, 65535), Endian.little); // kernLeft count
+      view.setUint16(offset, result.kerning.leftClasses.length.clamp(0, 65535), Endian.little);
       offset += 2;
-      view.setUint16(offset, result.kerning.rightClasses.length.clamp(0, 65535), Endian.little); // kernRight count
+      view.setUint16(offset, result.kerning.rightClasses.length.clamp(0, 65535), Endian.little);
       offset += 2;
-      view.setUint8(offset, result.kerning.leftClassCount.clamp(0, 255)); // kernLeftClasses
+      view.setUint8(offset, result.kerning.leftClassCount.clamp(0, 255));
       offset += 1;
-      view.setUint8(offset, result.kerning.rightClassCount.clamp(0, 255)); // kernRightClasses
+      view.setUint8(offset, result.kerning.rightClassCount.clamp(0, 255));
       offset += 1;
-      view.setUint8(offset, result.ligatures.length.clamp(0, 255)); // 🎯 теперь реальное число лигатур
+      view.setUint8(offset, result.ligatures.length.clamp(0, 255));
       offset += 1;
       view.setUint32(offset, styleOffsets[style]!, Endian.little);
       offset += 4;
       offset += 4;
     }
 
-    // === 3. ДАННЫЕ КАЖДОГО СТИЛЯ ===
+    // ДАННЫЕ СТИЛЕЙ
     for (final style in FontStyle.values) {
       final result = styleResults[style]!;
       final glyphs = result.glyphs;
@@ -829,10 +761,7 @@ class NativeFontConverter {
         currentBitmapOffset += glyph.bitmap.length;
       }
 
-      // 🎯 КЕРНИНГ: kernLeftClasses/kernRightClasses — отсортированные по
-      // codepoint записи {codepoint: u16 LE, classId: u8} (3 байта каждая),
-      // затем kernMatrix — плоский int8[leftCount*rightCount]. Формат
-      // подтверждён по реальному PR прошивки (#873).
+      // КЕРНИНГ
       for (final entry in result.kerning.leftClasses) {
         view.setUint16(offset, entry.codepoint, Endian.little);
         offset += 2;
@@ -850,9 +779,7 @@ class NativeFontConverter {
         offset += 1;
       }
 
-      // 🎯 ЛИГАТУРЫ: 8 байт на запись — pair (u32 LE, (leftCp<<16)|rightCp)
-      // + ligatureCp (u32 LE). Формат подтверждён по реальному PR прошивки
-      // (#873, "Support for kerning and ligatures").
+      // ЛИГАТУРЫ
       for (final lig in result.ligatures) {
         view.setUint32(offset, lig.pair, Endian.little);
         offset += 4;
