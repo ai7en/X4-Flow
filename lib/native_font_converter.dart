@@ -124,153 +124,475 @@ class NativeFontConverter {
   static const int intervalSize = 12;
   static const int glyphSize = 16;
 
-  // ── Stem Calibration ─────────────────────────────────────────────
-  /// Распаковывает 2-bit или 1-bit bitmap в grayscale 0..255.
-  List<int> _unpackGrayBitmap(Uint8List packed, int width, int height, bool is2Bit) {
-    final result = List<int>.filled(width * height, 0);
-    int bitPos = 0;
-    int bytePos = 0;
-    final int totalPixels = width * height;
-    for (int i = 0; i < totalPixels; i++) {
-      if (is2Bit) {
-        final shift = 6 - (bitPos % 8);
-        final val = (packed[bytePos] >> shift) & 0x03;
-        result[i] = (val * 85).clamp(0, 255);
-        bitPos += 2;
-        if (bitPos % 8 == 0) bytePos++;
-        if (bytePos >= packed.length && i < totalPixels - 1) break;
-      } else {
-        final shift = 7 - (bitPos % 8);
-        final val = (packed[bytePos] >> shift) & 0x01;
-        result[i] = val == 1 ? 255 : 0;
-        bitPos += 1;
-        if (bitPos % 8 == 0) bytePos++;
-        if (bytePos >= packed.length && i < totalPixels - 1) break;
-      }
-    }
-    return result;
+  // ── Stem Calibration Constants (match Python suggest_ppem) ─────
+  static const double _kSuggestTolPt = 1.5;
+  static const double _kSuggestSizeW = 4.0;
+  static const int _kFringeMinRun = 4;
+  static const double _kContrastThreshold = 1.75;
+  static const double _kUnevenW = 3.0;
+  static const double _kStem2PxW = 30.0;
+  static const String _kStemSample = "ilhnu";
+  static const String _kSuggestPangram = "The quick brown fox jumps over the lazy dog";
+
+  /// Convert grayscale value (0..255) to 2-bit level (0..3) using thresholds 64/128/192
+  /// (equivalent to Python's 4/8/12 on 4-bit scale, i.e. 64/128/192 on 8-bit)
+  int _grayToLevel(int gray) {
+    if (gray >= 192) return 3;
+    if (gray >= 128) return 2;
+    if (gray >= 64) return 1;
+    return 0;
   }
 
-  /// Измеряет "грязь" (gray fringe) на вертикальных краях stem глифа.
-  /// Чем меньше значение — тем чище штрих.
-  double _measureStemQuality(ConvertedGlyph glyph, bool is2Bit) {
-    final gray = _unpackGrayBitmap(glyph.bitmap, glyph.width, glyph.height, is2Bit);
-    final w = glyph.width;
-    final h = glyph.height;
+  /// Rasterize a single glyph and return its grayscale bitmap + metrics.
+  /// Returns null if glyph not available.
+  Future<Map<String, dynamic>?> _rasterizeGlyphGray(
+    int cp,
+    String fontFamily,
+    double renderSize,
+    bool forceBold,
+    bool forceItalic,
+  ) async {
+    final charStr = String.fromCharCode(cp);
+    final textStyle = ui.TextStyle(
+      fontFamily: fontFamily,
+      fontSize: renderSize,
+      color: const ui.Color(0xFF000000),
+      fontWeight: forceBold ? ui.FontWeight.bold : ui.FontWeight.normal,
+      fontStyle: forceItalic ? ui.FontStyle.italic : ui.FontStyle.normal,
+    );
+    final paragraphStyle = ui.ParagraphStyle(textDirection: ui.TextDirection.ltr);
+    final pb = ui.ParagraphBuilder(paragraphStyle)..pushStyle(textStyle)..addText(charStr);
+    final paragraph = pb.build()..layout(const ui.ParagraphConstraints(width: double.infinity));
 
-    // Bounding box с ink
-    int minX = w, maxX = -1, minY = h, maxY = -1;
-    for (int y = 0; y < h; y++) {
-      for (int x = 0; x < w; x++) {
-        if (gray[y * w + x] > 20) {
-          minX = math.min(minX, x);
-          maxX = math.max(maxX, x);
-          minY = math.min(minY, y);
-          maxY = math.max(maxY, y);
+    final double advanceMeasured = paragraph.longestLine;
+    final double lineHeight = paragraph.height;
+    final double baseline = paragraph.alphabeticBaseline;
+
+    final int margin = (renderSize * 0.5).ceil().clamp(4, 64);
+    final int canvasW = (advanceMeasured.ceil() + margin * 2).clamp(1, 512);
+    final int canvasH = (lineHeight.ceil() + margin * 2).clamp(1, 512);
+
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.drawRect(
+      ui.Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()),
+      ui.Paint()..color = const ui.Color(0xFFFFFFFF),
+    );
+    canvas.drawParagraph(paragraph, ui.Offset(margin.toDouble(), margin.toDouble()));
+
+    final picture = recorder.endRecording();
+    final img = await picture.toImage(canvasW, canvasH);
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+    img.dispose();
+    picture.dispose();
+
+    if (byteData == null) return null;
+    final buffer = byteData.buffer.asUint8List();
+
+    // Convert to grayscale and find bbox
+    final gray = Uint8List(canvasW * canvasH);
+    int minX = canvasW, minY = canvasH, maxX = -1, maxY = -1;
+    for (int y = 0; y < canvasH; y++) {
+      for (int x = 0; x < canvasW; x++) {
+        final offset = (y * canvasW + x) * 4;
+        final r = buffer[offset];
+        final g = buffer[offset + 1];
+        final b = buffer[offset + 2];
+        final brightness = (r * 299 + g * 587 + b * 114) ~/ 1000;
+        final ink = 255 - brightness;
+        gray[y * canvasW + x] = ink;
+        if (ink > 10) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
         }
       }
     }
-    if (maxX < 0) return double.infinity;
 
-    // Плотность ink по столбцам внутри bounding box
-    final colCount = maxX - minX + 1;
-    final List<double> colDensities = List.filled(colCount, 0.0);
-    for (int x = 0; x < colCount; x++) {
-      double sum = 0;
-      for (int y = minY; y <= maxY; y++) {
-        sum += gray[y * w + (minX + x)] / 255.0;
-      }
-      colDensities[x] = sum / (maxY - minY + 1);
+    if (maxX < 0) {
+      // Blank glyph
+      return {
+        'w': 0, 'h': 0, 'left': 0, 'top': 0,
+        'advance': (advanceMeasured * 16).round(),
+        'gray': gray, 'canvasW': canvasW, 'canvasH': canvasH,
+        'minX': minX, 'minY': minY, 'maxX': maxX, 'maxY': maxY,
+      };
     }
 
-    // Находим первый непрерывный stem: столбцы с density > 0.35
-    int stemStart = -1, stemEnd = -1;
-    for (int i = 0; i < colCount; i++) {
-      if (colDensities[i] > 0.35) {
-        if (stemStart == -1) stemStart = i;
-        stemEnd = i;
-      } else if (stemStart != -1) {
-        break; // берём только первый stem (обычно левый вертикальный)
-      }
-    }
-    if (stemStart == -1) return double.infinity;
+    final glyphWidth = maxX - minX + 1;
+    final glyphHeight = maxY - minY + 1;
+    final left = minX - margin;
+    final top = (baseline - (minY - margin)).round();
 
-    final stemWidth = (stemEnd - stemStart + 1).toDouble();
-    final stemWidthFrac = (stemWidth - stemWidth.roundToDouble()).abs();
-
-    // Считаем "fringe" внутри stem — пиксели с промежуточной яркостью
-    double fringe = 0;
-    for (int i = stemStart; i <= stemEnd; i++) {
-      for (int y = minY; y <= maxY; y++) {
-        final v = gray[y * w + (minX + i)] / 255.0;
-        if (v > 0.05 && v < 0.95) fringe += 1.0;
+    // Extract cropped grayscale
+    final cropped = List<int>.filled(glyphWidth * glyphHeight, 0);
+    for (int y = 0; y < glyphHeight; y++) {
+      for (int x = 0; x < glyphWidth; x++) {
+        cropped[y * glyphWidth + x] = gray[(minY + y) * canvasW + (minX + x)];
       }
     }
 
-    // "Грязь" на границах stem (слева и справа)
-    double edgeDirt = 0;
-    if (stemStart > 0) {
-      for (int y = minY; y <= maxY; y++) {
-        final v = gray[y * w + (minX + stemStart - 1)] / 255.0;
-        if (v > 0.05 && v < 0.95) edgeDirt += 1.5;
-      }
-    }
-    if (stemEnd < colCount - 1) {
-      for (int y = minY; y <= maxY; y++) {
-        final v = gray[y * w + (minX + stemEnd + 1)] / 255.0;
-        if (v > 0.05 && v < 0.95) edgeDirt += 1.5;
-      }
-    }
-
-    // Штраф за нецелую ширину stem + базовый fringe
-    return fringe + edgeDirt + stemWidthFrac * 10.0;
+    return {
+      'w': glyphWidth, 'h': glyphHeight,
+      'left': left, 'top': top,
+      'advance': (advanceMeasured * 16).round(),
+      'gray': gray, 'canvasW': canvasW, 'canvasH': canvasH,
+      'minX': minX, 'minY': minY, 'maxX': maxX, 'maxY': maxY,
+      'cropped': cropped,
+    };
   }
 
-  /// Подбирает лучший renderSize (ppem) для nominalPt в диапазоне ±3 pt,
-  /// минимизируя gray fringe на тестовых глифах n, o, H.
+  /// Measure stroke contrast = thick(side)/thin(top) of 'o' at large size.
+  /// ~1.0 = monolinear (sans, slab), >2 = high-contrast (modulated serif).
+  Future<double> _strokeContrast(String fontFamily) async {
+    final info = await _rasterizeGlyphGray(
+      0x006F, fontFamily, 96.0, false, false,
+    );
+    if (info == null || info['w'] == 0) return 1.0;
+
+    final w = info['w'] as int;
+    final h = info['h'] as int;
+    final cropped = info['cropped'] as List<int>;
+
+    // Find ink pixels (threshold 128 = level 2+)
+    bool ink(int x, int y) => cropped[y * w + x] >= 128;
+
+    final yc = h ~/ 2;
+    final xs = <int>[];
+    for (int x = 0; x < w; x++) if (ink(x, yc)) xs.add(x);
+    final xc = w ~/ 2;
+    final ys = <int>[];
+    for (int y = 0; y < h; y++) if (ink(xc, y)) ys.add(y);
+
+    if (xs.isEmpty || ys.isEmpty) return 1.0;
+
+    int side = 0;
+    for (int x = xs[0]; x < w; x++) {
+      if (ink(x, yc)) side++;
+      else break;
+    }
+    int top = 0;
+    for (int y = ys[0]; y < h; y++) {
+      if (ink(xc, y)) top++;
+      else break;
+    }
+
+    return top > 0 ? side / top : 1.0;
+  }
+
+  /// Measure stem: median coverage (px) and gray fraction for straight-stem letters.
+  /// Equivalent to Python's _measure_stem.
+  Future<Map<String, dynamic>?> _measureStem(
+    String fontFamily,
+    double renderSize,
+  ) async {
+    final covs = <double>[];
+    int solid = 0, gray = 0;
+
+    for (final ch in "lihnmru".codeUnits) {
+      final info = await _rasterizeGlyphGray(
+        ch, fontFamily, renderSize, false, false,
+      );
+      if (info == null || info['w'] == 0) continue;
+
+      final w = info['w'] as int;
+      final h = info['h'] as int;
+      final cropped = info['cropped'] as List<int>;
+
+      for (int y = (h * 0.45).floor(); y < (h * 0.78).floor(); y++) {
+        if (y < 0 || y >= h) continue;
+        // Find leftmost ink run
+        int? a;
+        for (int x = 0; x < w; x++) {
+          if (cropped[y * w + x] > 0) { a = x; break; }
+        }
+        if (a == null) continue;
+        int bb = a;
+        for (int x = a; x < w; x++) {
+          if (cropped[y * w + x] > 0) bb = x;
+          else break;
+        }
+        double cov = 0.0;
+        for (int x = a; x <= bb; x++) {
+          final v = cropped[y * w + x];
+          cov += v / 255.0;
+          if (v >= 192) solid++;
+          else if (v > 0) gray++;
+        }
+        if (cov < 0.4) continue;
+        covs.add(cov);
+      }
+    }
+
+    if (covs.isEmpty) return null;
+    covs.sort();
+    final medCov = covs[covs.length ~/ 2];
+    final gf = (solid + gray) > 0 ? gray / (solid + gray) : 0.0;
+    return {'cov': medCov, 'gf': gf};
+  }
+
+  /// Median solid-black width of leftmost stem run, per STEM_SAMPLE letter.
+  Future<List<int>> _stemSolidWidths(String fontFamily, double renderSize) async {
+    final out = <int>[];
+    for (final ch in _kStemSample.codeUnits) {
+      final info = await _rasterizeGlyphGray(
+        ch, fontFamily, renderSize, false, false,
+      );
+      if (info == null || info['w'] == 0) continue;
+
+      final w = info['w'] as int;
+      final h = info['h'] as int;
+      final cropped = info['cropped'] as List<int>;
+
+      final ws = <int>[];
+      for (int y = (h * 0.45).floor(); y < (h * 0.78).floor(); y++) {
+        if (y < 0 || y >= h) continue;
+        int? a;
+        for (int x = 0; x < w; x++) {
+          if (cropped[y * w + x] >= 64) { a = x; break; }
+        }
+        if (a == null) continue;
+        int bb = a;
+        for (int x = a; x < w; x++) {
+          if (cropped[y * w + x] >= 64) bb = x;
+          else break;
+        }
+        final solCount = <int>[];
+        for (int x = a; x <= bb; x++) {
+          if (cropped[y * w + x] >= 192) solCount.add(1);
+        }
+        if (solCount.isNotEmpty) ws.add(solCount.length);
+      }
+      if (ws.isNotEmpty) {
+        ws.sort();
+        out.add(ws[ws.length ~/ 2]);
+      }
+    }
+    return out;
+  }
+
+  /// Sum of absolute deviations from median.
+  double _unevenness(List<int> widths) {
+    if (widths.length < 2) return 0;
+    final sorted = List<int>.from(widths)..sort();
+    final m = sorted[sorted.length ~/ 2];
+    return widths.fold(0.0, (sum, w) => sum + (w - m).abs());
+  }
+
+  /// Compose text into a 2-bit level grid at given renderSize.
+  /// Returns [grid, width, height].
+  Future<List<dynamic>> _pangramLevels(
+    String fontFamily,
+    double renderSize,
+    String text,
+    bool forceBold,
+    bool forceItalic,
+  ) async {
+    final textStyle = ui.TextStyle(
+      fontFamily: fontFamily,
+      fontSize: renderSize,
+      color: const ui.Color(0xFF000000),
+      fontWeight: forceBold ? ui.FontWeight.bold : ui.FontWeight.normal,
+      fontStyle: forceItalic ? ui.FontStyle.italic : ui.FontStyle.normal,
+    );
+    final paragraphStyle = ui.ParagraphStyle(textDirection: ui.TextDirection.ltr);
+
+    // First pass: measure total width and collect glyph data
+    double pen = 0;
+    final items = <Map<String, dynamic>>[];
+    double maxLineH = 0;
+
+    for (final cp in text.codeUnits) {
+      final pb = ui.ParagraphBuilder(paragraphStyle)..pushStyle(textStyle)..addText(String.fromCharCode(cp));
+      final para = pb.build()..layout(const ui.ParagraphConstraints(width: double.infinity));
+      final advance = para.longestLine;
+      final lineH = para.height;
+      final baseline = para.alphabeticBaseline;
+      if (lineH > maxLineH) maxLineH = lineH;
+
+      final int margin = (renderSize * 0.5).ceil().clamp(4, 64);
+      final int canvasW = (advance.ceil() + margin * 2).clamp(1, 512);
+      final int canvasH = (lineH.ceil() + margin * 2).clamp(1, 512);
+
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      canvas.drawRect(
+        ui.Rect.fromLTWH(0, 0, canvasW.toDouble(), canvasH.toDouble()),
+        ui.Paint()..color = const ui.Color(0xFFFFFFFF),
+      );
+      canvas.drawParagraph(para, ui.Offset(margin.toDouble(), margin.toDouble()));
+
+      final picture = recorder.endRecording();
+      final img = await picture.toImage(canvasW, canvasH);
+      final byteData = await img.toByteData(format: ui.ImageByteFormat.rawRgba);
+      img.dispose();
+      picture.dispose();
+
+      if (byteData == null) {
+        pen += advance;
+        continue;
+      }
+
+      final buffer = byteData.buffer.asUint8List();
+      int minX = canvasW, minY = canvasH, maxX = -1, maxY = -1;
+      for (int y = 0; y < canvasH; y++) {
+        for (int x = 0; x < canvasW; x++) {
+          final offset = (y * canvasW + x) * 4;
+          final brightness = (buffer[offset] * 299 + buffer[offset + 1] * 587 + buffer[offset + 2] * 114) ~/ 1000;
+          final ink = 255 - brightness;
+          if (ink > 10) {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      final glyphW = maxX >= 0 ? maxX - minX + 1 : 0;
+      final glyphH = maxY >= 0 ? maxY - minY + 1 : 0;
+      final left = minX - margin;
+      final top = (baseline - (minY - margin)).round();
+
+      // Extract levels
+      List<List<int>>? lv;
+      if (glyphW > 0 && glyphH > 0) {
+        lv = List.generate(glyphH, (y) => List<int>.filled(glyphW, 0));
+        for (int y = 0; y < glyphH; y++) {
+          for (int x = 0; x < glyphW; x++) {
+            final offset = ((minY + y) * canvasW + (minX + x)) * 4;
+            final brightness = (buffer[offset] * 299 + buffer[offset + 1] * 587 + buffer[offset + 2] * 114) ~/ 1000;
+            final ink = 255 - brightness;
+            lv[y][x] = _grayToLevel(ink);
+          }
+        }
+      }
+
+      items.add({
+        'x0': pen + left,
+        'y0': baseline.round() - top,
+        'lv': lv,
+        'w': glyphW,
+        'h': glyphH,
+        'adv': advance,
+      });
+      pen += advance;
+    }
+
+    // Compute line metrics
+    final pb = ui.ParagraphBuilder(paragraphStyle)..pushStyle(textStyle)..addText('Hg');
+    final para = pb.build()..layout(const ui.ParagraphConstraints(width: double.infinity));
+    final asc = para.alphabeticBaseline.round();
+    final desc = (para.alphabeticBaseline - para.height).round();
+    final lineH = asc - desc;
+    const pad = 1;
+
+    double maxX = 0;
+    for (final it in items) {
+      final x0 = it['x0'] as double;
+      final w = it['w'] as int;
+      if (x0 + w > maxX) maxX = x0 + w;
+    }
+
+    final W = math.max(pen, maxX).ceil() + pad;
+    final H = lineH + 2 * pad;
+
+    final grid = List.generate(H, (_) => List<int>.filled(W, 0));
+    for (final it in items) {
+      final lv = it['lv'] as List<List<int>>?;
+      if (lv == null) continue;
+      final x0 = (it['x0'] as double).round();
+      final y0 = (it['y0'] as num).round();
+      final w = it['w'] as int;
+      final h = it['h'] as int;
+      for (int yy = 0; yy < h; yy++) {
+        final gy = y0 + yy + pad;
+        if (gy < 0 || gy >= H) continue;
+        for (int xx = 0; xx < w; xx++) {
+          final gx = x0 + xx;
+          if (gx >= 0 && gx < W && lv[yy][xx] > grid[gy][gx]) {
+            grid[gy][gx] = lv[yy][xx];
+          }
+        }
+      }
+    }
+
+    return [grid, W, H];
+  }
+
+  /// Count columns with long vertical runs of light grey (level 1).
+  int _fringeColumns(List<List<int>> grid, int W, int H, {int minRun = _kFringeMinRun}) {
+    int count = 0;
+    for (int x = 0; x < W; x++) {
+      int run = 0, best = 0;
+      for (int y = 0; y < H; y++) {
+        if (grid[y][x] == 1) {
+          run++;
+          if (run > best) best = run;
+        } else {
+          run = 0;
+        }
+      }
+      if (best > minRun) count++;
+    }
+    return count;
+  }
+
+  /// Pick render ppem within +-tol_pt of nominal.
+  /// Dispatches on stroke contrast: monolinear -> clean integer stem target;
+  /// variable -> minimize light-grey fringe columns.
   Future<double> _findCalibratedRenderSize({
     required String fontFamilyName,
     required int nominalPt,
     required bool is2Bit,
   }) async {
-    final nominalRender = nominalPt * 2.1;
+    final contrast = await _strokeContrast(fontFamilyName);
+    final monolinear = contrast < _kContrastThreshold;
+    final nominalRender = nominalPt * 150.0 / 72.0;
+    final span = math.max(1, (_kSuggestTolPt * 150.0 / 72.0).round());
+
+    // Monolinear target: nearest clean integer stem width to natural stem at this size
+    int target = 2;
+    if (monolinear) {
+      final m0 = await _measureStem(fontFamilyName, nominalRender);
+      if (m0 != null) {
+        target = math.max(2, math.min(4, (m0['cov'] as double).round()));
+      }
+    }
+
+    double? bestScore;
     double bestSize = nominalRender;
-    double bestScore = double.infinity;
 
-    // Перебираем с шагом 0.5 в диапазоне ±3 от nominal
-    for (double testSize = nominalRender - 3.0;
-        testSize <= nominalRender + 3.0;
-        testSize += 0.5) {
-      if (testSize < 6) continue;
+    for (int ppem = (nominalRender - span).round();
+         ppem <= (nominalRender + span).round();
+         ppem++) {
+      if (ppem < 6) continue;
 
-      double totalScore = 0;
-      int samples = 0;
+      final widths = await _stemSolidWidths(fontFamilyName, ppem.toDouble());
+      final uneven = _unevenness(widths);
 
-      // Тестовые глифы: n, o, H (покрывают вертикальный stem и овал)
-      for (final cp in [0x006E, 0x006F, 0x0048]) {
-        final glyph = await _rasterizeGlyph(
-          cp: cp,
-          fontFamily: fontFamilyName,
-          renderSize: testSize,
-          is2Bit: is2Bit,
-          forceBold: false,
-          forceItalic: false,
+      double base;
+      if (monolinear) {
+        final m = await _measureStem(fontFamilyName, ppem.toDouble());
+        final cov = m != null ? m['cov'] as double : target.toDouble();
+        final gf = m != null ? m['gf'] as double : 0.0;
+        base = ((cov - target).abs() + 1.5 * gf) * _kStem2PxW;
+      } else {
+        final result = await _pangramLevels(
+          fontFamilyName, ppem.toDouble(), _kSuggestPangram, false, false,
         );
-        if (glyph.width == 0 || glyph.height == 0) continue;
-        totalScore += _measureStemQuality(glyph, is2Bit);
-        samples++;
+        final grid = result[0] as List<List<int>>;
+        final W = result[1] as int;
+        final H = result[2] as int;
+        base = _fringeColumns(grid, W, H).toDouble();
       }
 
-      if (samples == 0) continue;
-      final avgScore = totalScore / samples;
+      final score = -base - _kUnevenW * uneven - _kSuggestSizeW * (ppem - nominalRender).abs() * 72.0 / 150.0;
 
-      // Небольшой штраф за отклонение от nominal, чтобы не уходить далеко
-      final sizeDeviation = (testSize - nominalRender).abs() * 0.3;
-      final finalScore = avgScore + sizeDeviation;
-
-      if (finalScore < bestScore) {
-        bestScore = finalScore;
-        bestSize = testSize;
+      if (bestScore == null || score > bestScore) {
+        bestScore = score;
+        bestSize = ppem.toDouble();
       }
     }
 
@@ -287,7 +609,7 @@ class NativeFontConverter {
     required List<int> sizes,
     required List<List<int>> intervals,
     bool is2Bit = true,
-    bool stemCalibrate = false, // 🆕
+    bool stemCalibrate = false,
     void Function(int current, int total)? onProgress,
   }) async {
     await _registerFont(regularFont, fontFamily);
@@ -302,8 +624,7 @@ class NativeFontConverter {
     final activeSizes = sizes.isNotEmpty ? sizes : [12, 14, 16, 18];
     final Map<int, Uint8List> results = {};
 
-    // 🆕 Stem calibration: находим лучший renderSize для каждого nominalPt
-    // (по Regular стилю, затем применяем ко всем стилям — как в Python-пайплайне)
+    // Stem calibration: find best renderSize for each nominalPt (using Regular style)
     final Map<int, double> calibratedSizes = {};
     if (stemCalibrate) {
       for (final fontSizePt in activeSizes) {
@@ -329,7 +650,7 @@ class NativeFontConverter {
     for (final fontSizePt in activeSizes) {
       final double renderSize = stemCalibrate
           ? calibratedSizes[fontSizePt]!
-          : fontSizePt * 2.1;
+          : fontSizePt * 150.0 / 72.0;
 
       final regularResult = await _rasterizeStyle(
         fontFamilyName: fontFamily,
