@@ -10,10 +10,14 @@ import 'app_localizations.dart';
 import 'native_font_converter.dart';
 
 // 🎯 БАЗОВОЕ ПОКРЫТИЕ — включается ВСЕГДА, не показывается как чекбокс.
+// Сверено с официальной таблицей пресетов lib/EpdFont/scripts/fontconvert_sdcard.py
+// (docs/sd-card-fonts.md) — профиль "reading": Latin, Greek, Cyrillic,
+// math/symbol blocks, supplemental punctuation, CJK quote marks.
 // --- Базовые наборы ---
   const officialReadingFictionProfile = [
     [0x0020, 0x007F], // Basic Latin (английский алфавит, цифры, базовые знаки, клавиатурный плюс/дефис)
-    [0x00A0, 0x00FF], // Latin-1 Supplement (знак градуса °, кавычки-ёлочки « », параграф §, диакритика для иностранных слов)
+    [0x0080, 0x00FF], // 🎯 Latin-1 Supplement — официально начинается с 0x0080, не 0x00A0
+                        // (знак градуса °, кавычки-ёлочки « », параграф §, диакритика для иностранных слов)
 
     // --- Наша спец-добавка для правильного отображения текстов ---
     [0x0300, 0x036F], // Combining Diacritical Marks (комбинируемые знаки ударения, чтобы буквы не превращались в квадраты)
@@ -29,6 +33,8 @@ import 'native_font_converter.dart';
 
     // --- Точечный хак для математики ---
     [0x2212, 0x2212], // Mathematical Minus (настоящий длинный минус для отрицательных чисел вроде −5)
+
+    [0x3008, 0x300F], // 🎯 CJK quote marks 「」『』〈〉《》— явно упомянуты в описании официального профиля "reading"
 ];
 
 // Дополнительные пресеты — используем ключи переводов для label.
@@ -172,6 +178,7 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
   };
   bool _is2Bit = true;
   bool _stemCalibrate = false; // 🆕 Stem calibration toggle
+  bool _useFreeType = false; // 🆕 FreeType rasterizer toggle (настоящий хинтинг)
   bool _sizesExpanded = true;   // 🆕 Состояние спойлера размеров
   bool _unicodeExpanded = false; // 🆕 Состояние спойлера Unicode
 
@@ -322,6 +329,7 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
         intervals: intervals,
         is2Bit: _is2Bit,
         stemCalibrate: _stemCalibrate, // 🆕
+        useFreeType: _useFreeType, // 🆕
       );
 
       var storageStatus = await Permission.storage.status;
@@ -615,7 +623,21 @@ class _FontConverterScreenState extends State<FontConverterScreen> {
                   title: Text(loc.translate('font_stem_calibration')),
                   subtitle: Text(loc.translate('font_stem_calibration_subtitle')),
                   value: _stemCalibrate,
-                  onChanged: (v) => setState(() => _stemCalibrate = v),
+                  onChanged: _useFreeType
+                      ? null // FreeType сам решает эту задачу — калибровка dart:ui тут не нужна
+                      : (v) => setState(() => _stemCalibrate = v),
+                ),
+                // 🆕 FreeType toggle — настоящий хинтинг вместо приближения
+                // через подбор размера + контраст. Выключает Stem calibration,
+                // т.к. они решают одну и ту же проблему разными способами.
+                SwitchListTile(
+                  title: Text(loc.translate('font_use_freetype')),
+                  subtitle: Text(loc.translate('font_use_freetype_subtitle')),
+                  value: _useFreeType,
+                  onChanged: (v) => setState(() {
+                    _useFreeType = v;
+                    if (v) _stemCalibrate = false;
+                  }),
                 ),
               ],
             ),

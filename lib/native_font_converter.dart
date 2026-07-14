@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 import 'gpos_kerning_parser.dart';
+import 'freetype_rasterizer.dart';
 
 class ConvertedGlyph {
   final int codePoint;
@@ -610,6 +611,8 @@ class NativeFontConverter {
     required List<List<int>> intervals,
     bool is2Bit = true,
     bool stemCalibrate = false,
+    bool useFreeType = false,
+    bool freeTypeForceAutohint = false,
     void Function(int current, int total)? onProgress,
   }) async {
     await _registerFont(regularFont, fontFamily);
@@ -625,8 +628,12 @@ class NativeFontConverter {
     final Map<int, Uint8List> results = {};
 
     // Stem calibration: find best renderSize for each nominalPt (using Regular style)
+    // 🎯 При useFreeType калибровка через dart:ui не нужна и не запускается —
+    // она компенсировала отсутствие хинтинга именно в dart:ui/Skia; у
+    // FreeType с FT_LOAD_FORCE_AUTOHINT честная подгонка под сетку уже
+    // встроена в сам рендер, поэтому используем наивный renderSize напрямую.
     final Map<int, double> calibratedSizes = {};
-    if (stemCalibrate) {
+    if (stemCalibrate && !useFreeType) {
       for (final fontSizePt in activeSizes) {
         calibratedSizes[fontSizePt] = await _findCalibratedRenderSize(
           fontFamilyName: fontFamily,
@@ -648,7 +655,7 @@ class NativeFontConverter {
     }
 
     for (final fontSizePt in activeSizes) {
-      final double renderSize = stemCalibrate
+      final double renderSize = (stemCalibrate && !useFreeType)
           ? calibratedSizes[fontSizePt]!
           : fontSizePt * 150.0 / 72.0;
 
@@ -660,6 +667,8 @@ class NativeFontConverter {
         forceBold: false,
         forceItalic: false,
         fontBytes: regularFont,
+        useFreeType: useFreeType,
+        forceAutohint: freeTypeForceAutohint,
         onGlyphDone: bumpProgress,
       );
 
@@ -671,6 +680,8 @@ class NativeFontConverter {
         forceBold: boldFont == null,
         forceItalic: false,
         fontBytes: boldFont ?? regularFont,
+        useFreeType: useFreeType,
+        forceAutohint: freeTypeForceAutohint,
         onGlyphDone: bumpProgress,
       );
 
@@ -682,6 +693,8 @@ class NativeFontConverter {
         forceBold: false,
         forceItalic: italicFont == null,
         fontBytes: italicFont ?? regularFont,
+        useFreeType: useFreeType,
+        forceAutohint: freeTypeForceAutohint,
         onGlyphDone: bumpProgress,
       );
 
@@ -695,6 +708,8 @@ class NativeFontConverter {
         forceBold: boldItalicFont == null,
         forceItalic: boldItalicFont == null,
         fontBytes: boldItalicFont ?? boldFont ?? regularFont,
+        useFreeType: useFreeType,
+        forceAutohint: freeTypeForceAutohint,
         onGlyphDone: bumpProgress,
       );
 
@@ -767,6 +782,8 @@ class NativeFontConverter {
     required bool forceBold,
     required bool forceItalic,
     required Uint8List fontBytes,
+    bool useFreeType = false,
+    bool forceAutohint = false,
     void Function()? onGlyphDone,
   }) async {
     final List<int> codePoints = [];
@@ -776,9 +793,32 @@ class NativeFontConverter {
       }
     }
 
-    final List<ConvertedGlyph> glyphs = [];
-    for (final cp in codePoints) {
-      final glyph = await _rasterizeGlyph(
+    // 🎯 FreeType — опциональный бэкенд растеризации (реальный хинтинг,
+    // как у официального конвертера, вместо приближения через dart:ui).
+    // Загружаем ОДИН раз на весь стиль (не на каждый глиф — это было бы
+    // очень расточительно) и аккуратно освобождаем в finally. Если по
+    // любой причине библиотека/шрифт не загрузились — тихо откатываемся
+    // на проверенный dart:ui-путь, не роняя всю конвертацию.
+    FreeTypeRasterizer? ftRasterizer;
+    if (useFreeType) {
+      try {
+        ftRasterizer = FreeTypeRasterizer.load(fontBytes);
+        ftRasterizer.setPixelSize(renderSize.round().clamp(1, 500));
+      } catch (e) {
+        ftRasterizer = null; // safe fallback на dart:ui ниже
+      }
+    }
+
+    Future<ConvertedGlyph> rasterizeOne(int cp) async {
+      if (ftRasterizer != null) {
+        final ftResult = ftRasterizer.rasterize(cp, forceAutohint: forceAutohint);
+        if (ftResult != null) {
+          return _convertFreeTypeResult(cp, ftResult, is2Bit: is2Bit);
+        }
+        // ftResult == null: глифа нет в шрифте — как и в dart:ui-пути,
+        // отдаём "пустой" глиф с нулевым растром, а не падаем.
+      }
+      return _rasterizeGlyph(
         cp: cp,
         fontFamily: fontFamilyName,
         renderSize: renderSize,
@@ -786,69 +826,104 @@ class NativeFontConverter {
         forceBold: forceBold,
         forceItalic: forceItalic,
       );
-      glyphs.add(glyph);
-      onGlyphDone?.call();
     }
 
-    // Лигатуры
-    final List<ConvertedGlyph> ligatureGlyphs = [];
-    final List<LigatureEntry> ligatures = [];
-    final Set<int> acceptedLigatureCps = {};
-
-    for (final cand in kLigatureCandidates) {
-      final leftIsBasicChar = cand.leftCp < 0xFB00;
-      if (!leftIsBasicChar && !acceptedLigatureCps.contains(cand.leftCp)) {
-        continue;
+    try {
+      final List<ConvertedGlyph> glyphs = [];
+      for (final cp in codePoints) {
+        final glyph = await rasterizeOne(cp);
+        glyphs.add(glyph);
+        onGlyphDone?.call();
       }
-      if (codePoints.contains(cand.resultCp)) continue;
 
-      final g = await _rasterizeGlyph(
-        cp: cand.resultCp,
-        fontFamily: fontFamilyName,
+      // Лигатуры
+      final List<ConvertedGlyph> ligatureGlyphs = [];
+      final List<LigatureEntry> ligatures = [];
+      final Set<int> acceptedLigatureCps = {};
+
+      for (final cand in kLigatureCandidates) {
+        final leftIsBasicChar = cand.leftCp < 0xFB00;
+        if (!leftIsBasicChar && !acceptedLigatureCps.contains(cand.leftCp)) {
+          continue;
+        }
+        if (codePoints.contains(cand.resultCp)) continue;
+
+        final g = await rasterizeOne(cand.resultCp);
+        if (g.width == 0 && g.height == 0) continue;
+
+        ligatureGlyphs.add(g);
+        acceptedLigatureCps.add(cand.resultCp);
+        ligatures.add(LigatureEntry((cand.leftCp << 16) | cand.rightCp, cand.resultCp));
+      }
+
+      final allGlyphs = [...glyphs, ...ligatureGlyphs];
+
+      final List<List<int>> finalIntervals = List.of(intervals);
+      for (final ligCp in acceptedLigatureCps) {
+        finalIntervals.add([ligCp, ligCp]);
+      }
+
+      final sortedPairs = <MapEntry<List<int>, List<ConvertedGlyph>>>[];
+      int glyphIdx = 0;
+      for (final interval in finalIntervals) {
+        final count = interval[1] - interval[0] + 1;
+        final intervalGlyphs = allGlyphs.sublist(glyphIdx, glyphIdx + count);
+        sortedPairs.add(MapEntry(interval, intervalGlyphs));
+        glyphIdx += count;
+      }
+
+      sortedPairs.sort((a, b) => a.key[0].compareTo(b.key[0]));
+
+      final sortedIntervals = sortedPairs.map((e) => e.key).toList();
+      final sortedGlyphs = sortedPairs.expand((e) => e.value).toList();
+
+      // КЕРНИНГ: через GPOS парсер с фильтрацией
+      final kerning = _measureKerningFromGPOS(
+        fontBytes: fontBytes,
         renderSize: renderSize,
-        is2Bit: is2Bit,
-        forceBold: forceBold,
-        forceItalic: forceItalic,
       );
-      if (g.width == 0 && g.height == 0) continue;
 
-      ligatureGlyphs.add(g);
-      acceptedLigatureCps.add(cand.resultCp);
-      ligatures.add(LigatureEntry((cand.leftCp << 16) | cand.rightCp, cand.resultCp));
+      return StyleRasterResult(
+        glyphs: sortedGlyphs,
+        intervals: sortedIntervals,
+        ligatures: ligatures,
+        kerning: kerning,
+      );
+    } finally {
+      ftRasterizer?.dispose();
     }
+  }
 
-    final allGlyphs = [...glyphs, ...ligatureGlyphs];
-
-    final List<List<int>> finalIntervals = List.of(intervals);
-    for (final ligCp in acceptedLigatureCps) {
-      finalIntervals.add([ligCp, ligCp]);
+  /// Мост между результатом FreeType-растеризации и нашим ConvertedGlyph —
+  /// переиспользует существующий _packBitmap (та же 2-bit/1-bit упаковка
+  /// и та же конвенция "0=фон, 255=чернила", что и в dart:ui-пути, так что
+  /// дальше по конвейеру (интервалы/кернинг/лигатуры/упаковка в .cpfont)
+  /// абсолютно ничего не меняется независимо от того, какой бэкенд растеризации использовался.
+  ConvertedGlyph _convertFreeTypeResult(
+    int cp,
+    FreeTypeGlyphResult ftResult, {
+    required bool is2Bit,
+  }) {
+    if (ftResult.width == 0 || ftResult.height == 0) {
+      return ConvertedGlyph(
+        codePoint: cp,
+        width: 0,
+        height: 0,
+        advanceX: ftResult.advance16,
+        left: 0,
+        top: 0,
+        bitmap: Uint8List(0),
+      );
     }
-
-    final sortedPairs = <MapEntry<List<int>, List<ConvertedGlyph>>>[];
-    int glyphIdx = 0;
-    for (final interval in finalIntervals) {
-      final count = interval[1] - interval[0] + 1;
-      final intervalGlyphs = allGlyphs.sublist(glyphIdx, glyphIdx + count);
-      sortedPairs.add(MapEntry(interval, intervalGlyphs));
-      glyphIdx += count;
-    }
-
-    sortedPairs.sort((a, b) => a.key[0].compareTo(b.key[0]));
-
-    final sortedIntervals = sortedPairs.map((e) => e.key).toList();
-    final sortedGlyphs = sortedPairs.expand((e) => e.value).toList();
-
-    // КЕРНИНГ: через GPOS парсер с фильтрацией
-    final kerning = _measureKerningFromGPOS(
-      fontBytes: fontBytes,
-      renderSize: renderSize,
-    );
-
-    return StyleRasterResult(
-      glyphs: sortedGlyphs,
-      intervals: sortedIntervals,
-      ligatures: ligatures,
-      kerning: kerning,
+    final packed = _packBitmap(ftResult.coverage, is2Bit);
+    return ConvertedGlyph(
+      codePoint: cp,
+      width: ftResult.width.clamp(1, 255),
+      height: ftResult.height.clamp(1, 255),
+      advanceX: ftResult.advance16.clamp(0, 65535),
+      left: ftResult.left.clamp(-32768, 32767),
+      top: ftResult.top.clamp(-32768, 32767),
+      bitmap: packed,
     );
   }
 
@@ -1066,6 +1141,7 @@ class NativeFontConverter {
     }
 
     cropped = _applyGapFix(cropped, glyphWidth, glyphHeight);
+    cropped = _applyStemDarkening(cropped);
     final Uint8List packedBitmap = _packBitmap(cropped, is2Bit);
 
     final int left = minX - margin;
@@ -1080,6 +1156,29 @@ class NativeFontConverter {
       top: top,
       bitmap: packedBitmap,
     );
+  }
+
+  /// 🎯 "Стем-даркенинг" на уровне пикселя (не путать со stem calibration,
+  /// которая подбирает общий render-size). Жалоба реального тестера:
+  /// вертикальные штрихи выглядят одновременно "зажирневшими" и "мутными" —
+  /// классический симптом слишком широкой переходной зоны полутонов на
+  /// антиалиасенной кромке при мелком размере.
+  ///
+  /// Простое затемнение (гамма < 1, тянущее ВСЁ к чёрному) было бы неверным
+  /// инструментом здесь: оно бы ещё и светлый "ореол" вокруг штриха утянуло
+  /// в сторону чернил — то есть буквально воспроизвело бы жалобу "зажирнело".
+  /// Вместо этого — симметричная контрастная растяжка вокруг середины
+  /// (0.5): светлые полутона (фон/окантовка) тянутся к фону, тёмные
+  /// (ядро штриха) — к чернилам, средний порог остаётся на месте. Это
+  /// сужает переходную зону и должно убрать именно "мутность", не меняя
+  /// системно толщину штриха в среднем.
+  List<int> _applyStemDarkening(List<int> gray, {double strength = 1.35}) {
+    return gray.map((v) {
+      final x = v / 255.0;
+      final centered = (x - 0.5) * strength;
+      final boosted = (0.5 + centered).clamp(0.0, 1.0);
+      return (boosted * 255).round();
+    }).toList();
   }
 
   List<int> _applyGapFix(List<int> gray, int width, int height) {

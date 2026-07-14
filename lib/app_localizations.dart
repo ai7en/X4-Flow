@@ -221,6 +221,9 @@ class AppLocalizations {
           'Подбирает размер рендеринга для чистых штрихов на E-Ink (рекомендуется для мелких кеглей)',
       'font_sizes_section': 'Размеры шрифта',
       'font_unicode_section': 'Диапазоны Unicode',
+      'font_use_freetype': 'Растеризация через FreeType',
+      'font_use_freetype_subtitle': 'Настоящий хинтинг шрифта (как у официального конвертера) вместо приближения через dart:ui',
+
     },
     'en': {
       // General
@@ -386,6 +389,8 @@ class AppLocalizations {
           'This script contains several thousand characters (ideographs/syllables). Conversion may take a long time, and the resulting font file will be significantly larger than usual. Continue?',
       'font_cancel': 'Cancel',
       'font_confirm': 'Continue',
+      'font_use_freetype': 'FreeType rasterization',
+      'font_use_freetype_subtitle': 'Real font hinting (like the official converter) instead of the dart:ui approximation',
 
       // Releases
       'releases_github_limits': 'GitHub API Limits (Optional)',
