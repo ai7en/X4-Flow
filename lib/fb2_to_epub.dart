@@ -137,10 +137,6 @@ class Fb2ToEpubConverter {
         .replaceAll("'", '&apos;');
   }
 
-  /// Достаёт href независимо от префикса namespace (href / l:href / xlink:href / ...).
-  /// Старый код проверял только 'href' и буквально 'l:href', из-за чего сноски
-  /// в файлах, где использовался другой префикс (например xlink:href), просто
-  /// оставались без ссылки.
   String _getHref(XmlElement node) {
     for (final attr in node.attributes) {
       if (attr.name.local.toLowerCase() == 'href') {
@@ -186,7 +182,6 @@ class Fb2ToEpubConverter {
     }
   }
 
-  /// Текст первого абзаца примечания — используется как всплывающая подсказка (title=)
   String _getFootnoteText(String noteId, List<XmlElement> notesSections) {
     for (var sec in notesSections) {
       final id = sec.getAttribute('id');
@@ -208,17 +203,6 @@ class Fb2ToEpubConverter {
     return '';
   }
 
-  /// 🎯 ГЛАВНЫЙ ФИКС СТРУКТУРЫ:
-  /// _processTextContainer обрабатывает ДЕТЕЙ переданного узла и решает, во что
-  /// обернуть каждого ребёнка, глядя на его localName (в т.ч. 'p' → абзац).
-  /// Раньше _extractSectionContent передавал сюда сам <p> как "контейнер",
-  /// из-за чего ветка `localName == 'p'` никогда не срабатывала для абзацев
-  /// верхнего уровня — они не оборачивались в <p>/<div class="paragraph">
-  /// целиком, а текст и вложенное форматирование (курсив, сноски и т.п.)
-  /// расползались по отдельным несвязанным блокам. Теперь _extractSectionContent
-  /// вызывает эту же функцию НАД самой секцией с skipTags — и диспетчеризация
-  /// по тегам работает одинаково что для верхнего уровня, что для вложенных
-  /// узлов (epigraph, cite, table и т.д.).
   String _processTextContainer(
     XmlNode container, {
     bool inline = false,
@@ -290,17 +274,11 @@ class Fb2ToEpubConverter {
               final noteText = notesSections != null ? _getFootnoteText(noteId, notesSections) : '';
               final titleAttr = noteText.isNotEmpty ? ' title="${_escapeXhtml(noteText)}"' : '';
 
-              // Резолвим путь к файлу примечаний, если уже известен на этот момент.
-              // Если ещё нет (порядок обхода) — оставляем "#id", он будет
-              // гарантированно дорезолвлен финальным проходом ниже, после того
-              // как sectionIdToFile полностью построена.
               String resolvedHref = href;
               if (sectionIdToFile != null && sectionIdToFile.containsKey(noteId)) {
                 resolvedHref = '${sectionIdToFile[noteId]}#$noteId';
               }
 
-              // Запоминаем, откуда именно пришли на сноску — чтобы "стрелка назад"
-              // на странице примечаний вела в правильный файл и на правильный якорь.
               final backAnchor = 'ref_$noteId';
               if (noteBacklinks != null && currentFileName != null) {
                 noteBacklinks[noteId] = '$currentFileName#$backAnchor';
@@ -359,9 +337,6 @@ class Fb2ToEpubConverter {
     return sb.toString();
   }
 
-  /// Тонкая обёртка: теперь просто прогоняет секцию через тот же диспетчер
-  /// тегов, что использует _processTextContainer, только пропуская
-  /// вложенные <section> (они — отдельные главы) и <title> (уже вынесен в h1).
   String _extractSectionContent(
     XmlElement section, {
     List<XmlElement>? notesSections,
@@ -466,6 +441,7 @@ $navMap</navMap>
     required Function(String status) onStatusUpdate,
     bool optimize = false,
     DeviceProfile? profile,
+    String? coverImagePath,
   }) async {
     final file = File(inputPath);
     final bytes = await file.readAsBytes();
@@ -571,19 +547,11 @@ $navMap</navMap>
       }
     }
 
-    // 🎯 ФИКС: определяем notes-body не по конкретным значениям name=
-    // ("notes"/"comments"), а как ЛЮБОЙ <body>, идущий после первого.
-    // По спецификации FB2 первый <body> без name — это основной текст,
-    // всё остальное — вспомогательный контент (сноски, комментарии,
-    // послесловие и т.п.), независимо от того, как он подписан.
-    // Старая версия ловила только name="notes"/"comments" и на файлах
-    // с другим значением (или без name вовсе) теряла секции сносок целиком,
-    // из-за чего ссылки оставались нерезолвленными.
     final List<XmlElement> notesBodies = bodyElements.length > 1
         ? bodyElements.sublist(1)
         : <XmlElement>[];
 
-    onStatusUpdate("Поиск всех глав (рекурсивно, как Calibre)...");
+    onStatusUpdate("Поиск всех глав (рекурсивно)...");
 
     final allSections = mainBody.descendants
         .whereType<XmlElement>()
@@ -598,13 +566,6 @@ $navMap</navMap>
           .toList());
     }
 
-    // 🎯 ФИКС: у многих FB2-книг (например «Мастер и Маргарита») заголовок
-    // книги и эпиграф лежат ПРЯМО в <body>, а не внутри какой-либо
-    // <section> — `<body><title>...</title><epigraph>...</epigraph>
-    // <section>...главы...</section></body>`. Старый код обрабатывал
-    // только <section>, поэтому такой заголовок+эпиграф пропадал целиком
-    // (Calibre в этом случае создаёт для них отдельную страницу сразу
-    // после аннотации, перед первой главой).
     final bodyTitleEl = mainBody.children
         .whereType<XmlElement>()
         .where((e) => e.name.local.toLowerCase() == 'title')
@@ -642,7 +603,6 @@ $navMap</navMap>
       return sb.toString();
     }
 
-    // Карта section_id → имя файла (для резолва якорных ссылок, включая сноски)
     final Map<String, String> sectionIdToFile = {};
     final Map<int, String> sectionToFile = {};
     int splitIndex = 0;
@@ -674,7 +634,6 @@ $navMap</navMap>
       }
     }
 
-    // Все примечания уходят в один файл notes.xhtml (как делает Calibre)
     const String notesFileName = 'notes.xhtml';
     for (var sec in notesSections) {
       final id = sec.getAttribute('id');
@@ -698,7 +657,6 @@ $navMap</navMap>
     List<Map<String, String>> chapters = [];
     splitIndex = 0;
 
-    // Куда вести "стрелку назад" со страницы примечаний — noteId → "файл#якорь"
     final Map<String, String> noteBacklinks = {};
 
     if (annotation.isNotEmpty) {
@@ -768,10 +726,6 @@ $navMap</navMap>
       }
     }
 
-    // 🎯 Страница примечаний: один файл, все сноски внутри, у каждой рабочая
-    // "стрелка назад" (ссылается на id="ref_$id", который реально проставлен
-    // на исходной ссылке в тексте — в исходнике этот id нигде не выставлялся,
-    // поэтому обратная ссылка была мёртвой).
     if (notesSections.isNotEmpty) {
       StringBuffer notesContent = StringBuffer();
       notesContent.write('<h1 class="calibre2">Примечания</h1>');
@@ -880,6 +834,34 @@ $navMap</navMap>
       }
     }
 
+    // 🎯 ЗАМЕНА ОБЛОЖКИ пользовательской картинкой
+    if (coverImagePath != null) {
+      onStatusUpdate("🖼️ Замена обложки пользовательской картинкой...");
+      try {
+        final userCoverBytes = await File(coverImagePath).readAsBytes();
+        Uint8List finalBytes = Uint8List.fromList(userCoverBytes);
+
+        if (profile != null) {
+          finalBytes = _optimizeImageForEInk(finalBytes, profile);
+          onStatusUpdate("🎨 Обложка оптимизирована под ${profile.name}");
+        }
+
+        // Удаляем ТОЛЬКО старую обложку, если она была
+        if (coverFileName != null) {
+          images.remove(coverFileName);
+        }
+
+        coverFileName = 'cover.jpeg';
+        images[coverFileName] = {
+          'bytes': finalBytes,
+          'mime': 'image/jpeg',
+          'fb2Id': 'cover',
+        };
+      } catch (e) {
+        onStatusUpdate("⚠️ Ошибка замены обложки: $e");
+      }
+    }
+
     for (var ch in chapters) {
       String content = ch['content']!;
       fb2IdToEpubName.forEach((fb2Id, epubName) {
@@ -889,14 +871,6 @@ $navMap</navMap>
         content = content.replaceAll("src='$fb2Id'", "src='$epubName'");
       });
 
-      // 🎯 СТРАХОВОЧНЫЙ ФИНАЛЬНЫЙ ПРОХОД: к этому моменту sectionIdToFile
-      // построена ПОЛНОСТЬЮ (включая все id примечаний). Даже если по какой-то
-      // причине инлайн-резолвинг выше не сработал (например, сноска
-      // встретилась раньше, чем её id был зарегистрирован), эта замена
-      // гарантированно дорезолвит любой оставшийся "голый" href="#id"
-      // в правильный "файл#id". Именно отсутствие такого гарантированного
-      // прохода и было причиной того, что часть сносок никуда не вела —
-      // читалка просто оставалась в текущей главе.
       sectionIdToFile.forEach((sectionId, fileName) {
         content = content.replaceAll('href="#$sectionId"', 'href="$fileName#$sectionId"');
         content = content.replaceAll("href='#$sectionId'", "href='$fileName#$sectionId'");
@@ -905,7 +879,7 @@ $navMap</navMap>
       ch['content'] = content;
     }
 
-    onStatusUpdate("📦 Сборка Calibre-style EPUB...");
+    onStatusUpdate("📦 Сборка EPUB...");
     final archive = Archive();
     final uuid = 'urn:uuid:${DateTime.now().millisecondsSinceEpoch}';
 

@@ -67,6 +67,14 @@ class AppLocalizations {
       'converter_mode_optimize': 'Оптим. EPUB',
       'converter_target_device': 'Целевое устройство',
       'converter_optimize_images': '🎨 Оптимизировать картинки',
+      // 🆕 Обложка
+      'converter_replace_cover': 'Заменить обложку',
+      'converter_cover_selected': 'Обложка выбрана',
+      'converter_remove_cover': 'Убрать обложку',
+      'converter_cover_error_format': 'Выберите изображение (JPG, PNG, WEBP, GIF)',
+      'converter_cover_replacing': '🖼️ Замена обложки пользовательской картинкой...',
+      'converter_cover_optimized': '🎨 Обложка оптимизирована под %device',
+      'converter_cover_error': '⚠️ Ошибка замены обложки: %error',
 
       // Обои
       'wallpaper_size': 'Размер',
@@ -163,7 +171,7 @@ class AppLocalizations {
       'font_bold': 'Bold',
       'font_italic': 'Italic',
       'font_bold_italic': 'Bold Italic',
-      'font_crosspoint_params': 'Параметры шрифта',  // 🆕 переименовано
+      'font_crosspoint_params': 'Параметры шрифта',
       'font_family_label': 'Font Family',
       'font_family_helper': 'Имя папки и префикс файлов',
       'font_sizes_label': 'Размеры:',
@@ -193,10 +201,6 @@ class AppLocalizations {
       'font_preset_latin_ext': 'Латиница расширенная (европейские языки)',
       'font_preset_greek': 'Греческий',
       'font_preset_symbols': 'Символы и стрелки',
-      'font_range_latin_ext': 'Латиница расширенная (европейские языки)',
-      'font_range_greek': 'Греческий',
-      'font_range_symbols': 'Символы и стрелки',
-      // 🆕 Новые пресеты Unicode (по списку crosspointreader.com/fonts)
       'font_preset_vietnamese': 'Вьетнамский',
       'font_preset_hebrew': 'Иврит',
       'font_preset_armenian': 'Армянский',
@@ -215,15 +219,13 @@ class AppLocalizations {
           'Этот скрипт содержит несколько тысяч символов (иероглифы/слоги). Конвертация может занять много времени, а итоговый файл шрифта будет значительно больше обычного. Продолжить?',
       'font_cancel': 'Отмена',
       'font_confirm': 'Продолжить',
-      // 🆕 Stem calibration & sections
       'font_stem_calibration': 'Калибровка штриха',
       'font_stem_calibration_subtitle':
           'Подбирает размер рендеринга для чистых штрихов на E-Ink (рекомендуется для мелких кеглей)',
       'font_sizes_section': 'Размеры шрифта',
       'font_unicode_section': 'Диапазоны Unicode',
       'font_use_freetype': 'Растеризация через FreeType',
-      'font_use_freetype_subtitle': 'Настоящий хинтинг шрифта (как у официального конвертера) вместо приближения через dart:ui',
-
+      'font_use_freetype_subtitle': 'Настоящий хинтинг шрифта (как у официального конвертера)',
     },
     'en': {
       // General
@@ -279,6 +281,14 @@ class AppLocalizations {
       'converter_mode_optimize': 'Opt. EPUB',
       'converter_target_device': 'Target device',
       'converter_optimize_images': '🎨 Optimize images',
+      // 🆕 Cover
+      'converter_replace_cover': 'Replace cover',
+      'converter_cover_selected': 'Cover selected',
+      'converter_remove_cover': 'Remove cover',
+      'converter_cover_error_format': 'Select an image (JPG, PNG, WEBP, GIF)',
+      'converter_cover_replacing': '🖼️ Replacing cover with user image...',
+      'converter_cover_optimized': '🎨 Cover optimized for %device',
+      'converter_cover_error': '⚠️ Cover replacement error: %error',
 
       // Wallpapers
       'wallpaper_size': 'Size',
@@ -337,7 +347,7 @@ class AppLocalizations {
       'font_bold': 'Bold',
       'font_italic': 'Italic',
       'font_bold_italic': 'Bold Italic',
-      'font_crosspoint_params': 'Font parameters',  // 🆕 renamed
+      'font_crosspoint_params': 'Font parameters',
       'font_family_label': 'Font Family',
       'font_family_helper': 'Folder name and file prefix',
       'font_sizes_label': 'Sizes:',
@@ -367,10 +377,6 @@ class AppLocalizations {
       'font_preset_latin_ext': 'Latin Extended (European languages)',
       'font_preset_greek': 'Greek',
       'font_preset_symbols': 'Symbols and arrows',
-      'font_range_latin_ext': 'Latin Extended (European languages)',
-      'font_range_greek': 'Greek',
-      'font_range_symbols': 'Symbols and arrows',
-      // 🆕 New Unicode presets (matching crosspointreader.com/fonts list)
       'font_preset_vietnamese': 'Vietnamese',
       'font_preset_hebrew': 'Hebrew',
       'font_preset_armenian': 'Armenian',
@@ -390,7 +396,7 @@ class AppLocalizations {
       'font_cancel': 'Cancel',
       'font_confirm': 'Continue',
       'font_use_freetype': 'FreeType rasterization',
-      'font_use_freetype_subtitle': 'Real font hinting (like the official converter) instead of the dart:ui approximation',
+      'font_use_freetype_subtitle': 'Real font hinting (like the official converter)',
 
       // Releases
       'releases_github_limits': 'GitHub API Limits (Optional)',
@@ -430,7 +436,7 @@ class AppLocalizations {
       'wifi_refresh': 'Refresh',
       'wifi_disconnect': 'Disconnect',
 
-      // 🆕 Stem calibration & sections
+      // Stem calibration & sections
       'font_stem_calibration': 'Stem calibration',
       'font_stem_calibration_subtitle':
           'Picks render size for crisp stems on E-Ink (recommended for small sizes)',

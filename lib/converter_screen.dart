@@ -29,6 +29,8 @@ class _ConverterScreenState extends State<ConverterScreen> {
   String _currentFileName = '';
   double _overallProgress = 0.0;
 
+  String? _coverImagePath;
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +80,37 @@ class _ConverterScreenState extends State<ConverterScreen> {
     return safe;
   }
 
+  Future<void> _pickCoverImage() async {
+    final loc = AppLocalizations.of(context);
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+      );
+      if (result != null && result.files.single.path != null) {
+        final name = result.files.single.name.toLowerCase();
+        if (!name.endsWith('.jpg') && !name.endsWith('.jpeg') && !name.endsWith('.png') && !name.endsWith('.webp') && !name.endsWith('.gif')) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(loc.translate('converter_cover_error_format')),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+          return;
+        }
+        setState(() => _coverImagePath = result.files.single.path);
+      }
+    } catch (e) {
+      debugPrint('Cover pick error: $e');
+    }
+  }
+
+  void _clearCoverImage() {
+    setState(() => _coverImagePath = null);
+  }
+
   Future<void> _pickFiles() async {
     final loc = AppLocalizations.of(context);
     try {
@@ -112,6 +145,7 @@ class _ConverterScreenState extends State<ConverterScreen> {
 
         setState(() {
           _selectedFiles = allowedFiles;
+          _coverImagePath = null;
           _currentStatus =
               '${loc.translate('converter_select')}: ${_selectedFiles.length}';
           _currentFileName = '';
@@ -136,7 +170,6 @@ class _ConverterScreenState extends State<ConverterScreen> {
     });
 
     try {
-      // 🎯 Проверка разрешений: работает и на Android 9-10, и на 11+
       var storageStatus = await Permission.storage.status;
       if (!storageStatus.isGranted) {
         storageStatus = await Permission.storage.request();
@@ -168,74 +201,70 @@ class _ConverterScreenState extends State<ConverterScreen> {
         await targetDir.create(recursive: true);
       }
 
-      // Создаём файл лога только при наличии ошибок
-final logFile = File('${targetDir.path}/conversion_log.txt');
-bool logCreated = false;
+      final logFile = File('${targetDir.path}/conversion_log.txt');
+      bool logCreated = false;
 
-void logWrite(String message) {
-  try {
-    if (!logCreated) {
-      // Создаём лог только при первой ошибке
-      logFile.writeAsStringSync(
-        '\n========================================\n'
-        '=== Конвертация: ${DateTime.now().toString()} ===\n'
-        '=== Режим: ${_mode == ConverterMode.fb2ToEpub ? "FB2→EPUB" : "Оптимизация EPUB"} ===\n'
-        '=== Устройство: ${profile.name} (${profile.width}x${profile.height}) ===\n'
-        '=== Оптимизация: ${_optimizeImages ? "ВКЛ" : "ВЫКЛ"} ===\n'
-        '========================================\n',
-        mode: FileMode.append,
-        flush: true,
-      );
-      logCreated = true;
-    }
-    logFile.writeAsStringSync('$message\n', mode: FileMode.append, flush: true);
-  } catch (e) {
-    debugPrint('Ошибка записи в лог: $e');
-  }
-}
+      void logWrite(String message) {
+        try {
+          if (!logCreated) {
+            logFile.writeAsStringSync(
+              '\n========================================\n'
+              '=== Конвертация: ${DateTime.now().toString()} ===\n'
+              '=== Режим: ${_mode == ConverterMode.fb2ToEpub ? "FB2→EPUB" : "Оптимизация EPUB"} ===\n'
+              '=== Устройство: ${profile.name} (${profile.width}x${profile.height}) ===\n'
+              '=== Оптимизация: ${_optimizeImages ? "ВКЛ" : "ВЫКЛ"} ===\n'
+              '========================================\n',
+              mode: FileMode.append,
+              flush: true,
+            );
+            logCreated = true;
+          }
+          logFile.writeAsStringSync('$message\n', mode: FileMode.append, flush: true);
+        } catch (e) {
+          debugPrint('Ошибка записи в лог: $e');
+        }
+      }
 
-int successCount = 0;
-final List<String> failedFiles = [];
+      int successCount = 0;
+      final List<String> failedFiles = [];
 
-for (int i = 0; i < _selectedFiles.length; i++) {
-  final file = _selectedFiles[i];
-  setState(() {
-    _currentFileName = file.name;
-    _currentStatus =
-        '${loc.translate('converter_processing')} ${i + 1} / ${_selectedFiles.length}';
-    _overallProgress = i / _selectedFiles.length;
-  });
-  if (file.path == null) continue;
+      for (int i = 0; i < _selectedFiles.length; i++) {
+        final file = _selectedFiles[i];
+        setState(() {
+          _currentFileName = file.name;
+          _currentStatus =
+              '${loc.translate('converter_processing')} ${i + 1} / ${_selectedFiles.length}';
+          _overallProgress = i / _selectedFiles.length;
+        });
+        if (file.path == null) continue;
 
-  try {
-    if (_mode == ConverterMode.fb2ToEpub) {
-      await _processFb2File(file, targetDir, profile);
-    } else {
-      await _processEpubFile(file, targetDir, profile);
-    }
-    successCount++;
-    // Успех НЕ логируем
-  } catch (e, stackTrace) {
-    debugPrint('Ошибка обработки ${file.name}: $e');
-    logWrite('❌ ОШИБКА: ${file.name}');
-    logWrite('   Причина: $e');
-    logWrite('   Stack trace:');
-    final stackLines = stackTrace.toString().split('\n').take(10).join('\n');
-    logWrite(stackLines);
-    failedFiles.add(file.name);
-    setState(() {
-      _currentStatus = '${loc.translate('error')}: ${file.name}';
-    });
-  }
-}
+        try {
+          if (_mode == ConverterMode.fb2ToEpub) {
+            await _processFb2File(file, targetDir, profile);
+          } else {
+            await _processEpubFile(file, targetDir, profile);
+          }
+          successCount++;
+        } catch (e, stackTrace) {
+          debugPrint('Ошибка обработки ${file.name}: $e');
+          logWrite('❌ ОШИБКА: ${file.name}');
+          logWrite('   Причина: $e');
+          logWrite('   Stack trace:');
+          final stackLines = stackTrace.toString().split('\n').take(10).join('\n');
+          logWrite(stackLines);
+          failedFiles.add(file.name);
+          setState(() {
+            _currentStatus = '${loc.translate('error')}: ${file.name}';
+          });
+        }
+      }
 
-// Итоговая запись только если были ошибки
-if (logCreated) {
-  logWrite('----------------------------------------');
-  logWrite('ИТОГО: $successCount успешно, ${failedFiles.length} с ошибками');
-  logWrite('Ошибки в файлах: ${failedFiles.join(", ")}');
-  logWrite('========================================\n');
-}
+      if (logCreated) {
+        logWrite('----------------------------------------');
+        logWrite('ИТОГО: $successCount успешно, ${failedFiles.length} с ошибками');
+        logWrite('Ошибки в файлах: ${failedFiles.join(", ")}');
+        logWrite('========================================\n');
+      }
 
       setState(() {
         _overallProgress = 1.0;
@@ -251,12 +280,12 @@ if (logCreated) {
             : 'Download/X4Flow/Books (with _optimized suffix)';
 
         String dialogContent = '${loc.translate('converter_success')}: $successCount\n'
-    '📂 ${loc.translate('converter_dialog_success_path')}:\n$successFolder';
+            '📂 ${loc.translate('converter_dialog_success_path')}:\n$successFolder';
 
-if (failedFiles.isNotEmpty) {
-  dialogContent += '\n\n❌ Errors: ${failedFiles.length}\n'
-      'Details in file:\n📄 conversion_log.txt';
-}
+        if (failedFiles.isNotEmpty) {
+          dialogContent += '\n\n❌ Errors: ${failedFiles.length}\n'
+              'Details in file:\n📄 conversion_log.txt';
+        }
 
         showDialog(
           context: context,
@@ -289,6 +318,7 @@ if (failedFiles.isNotEmpty) {
                     _currentFileName = '';
                     _overallProgress = 0.0;
                     _currentStatus = loc.translate('converter_waiting');
+                    _coverImagePath = null;
                   });
                 },
                 child: Text(
@@ -345,6 +375,7 @@ if (failedFiles.isNotEmpty) {
           _currentStatus = statusUpdate;
         });
       },
+      coverImagePath: _coverImagePath,
     );
 
     String safeAuthor = _sanitizeFileName(result.author);
@@ -368,7 +399,7 @@ if (failedFiles.isNotEmpty) {
         safeAuthor == 'Unknown') {
       fileName = '$safeTitle.epub';
     } else {
-      fileName = '$safeTitle - $safeAuthor.epub';  // 🎯 Название - Автор
+      fileName = '$safeTitle - $safeAuthor.epub';
     }
 
     String outputPath = '${targetDir.path}/$fileName';
@@ -411,6 +442,7 @@ if (failedFiles.isNotEmpty) {
           _currentStatus = statusUpdate;
         });
       },
+      coverImagePath: _coverImagePath,
     );
   }
 
@@ -447,6 +479,7 @@ if (failedFiles.isNotEmpty) {
                       setState(() {
                         _mode = set.first;
                         _selectedFiles = [];
+                        _coverImagePath = null;
                         _currentFileName = '';
                         _overallProgress = 0.0;
                         _currentStatus = loc.translate('converter_waiting');
@@ -510,6 +543,58 @@ if (failedFiles.isNotEmpty) {
             ),
           ),
           const SizedBox(height: 12),
+
+          if (_selectedFiles.length == 1 && !_isProcessing) ...[
+            Card(
+              margin: EdgeInsets.zero,
+              child: InkWell(
+                onTap: _pickCoverImage,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _coverImagePath != null ? Icons.image : Icons.add_photo_alternate_outlined,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _coverImagePath != null
+                                  ? loc.translate('converter_cover_selected')
+                                  : loc.translate('converter_replace_cover'),
+                              style: const TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            if (_coverImagePath != null)
+                              Text(
+                                _coverImagePath!.split(Platform.pathSeparator).last,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (_coverImagePath != null)
+                        IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: _clearCoverImage,
+                          tooltip: loc.translate('converter_remove_cover'),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
 
           Expanded(
             child: Center(
@@ -581,11 +666,11 @@ if (failedFiles.isNotEmpty) {
                 Expanded(
                   child: FilledButton(
                     onPressed: _processFiles,
-                    child: Text(
-                      _mode == ConverterMode.fb2ToEpub
-                          ? loc.translate('converter_convert')
-                          : 'Optimize',
-                    ),
+                child: Text(
+                  _mode == ConverterMode.fb2ToEpub
+                      ? loc.translate('converter_convert')
+                      : loc.translate('converter_mode_optimize'),
+                ),
                   ),
                 ),
               ],
